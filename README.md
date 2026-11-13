@@ -20,6 +20,7 @@
 | 次話の自動再生・おやすみタイマー・コメント検索・見どころ・未視聴フィルタ・次回予約・今日のハイライト | レコーダー系・コメント系の追加機能一式（視聴画面と録画一覧） | [報告](ADDITIONAL-FEATURES.md)／[パッチ](recorder-extras.patch) |
 | 画質プロファイル・画質の保持 | モバイル回線向けプロファイルのトグルと手動で選んだ画質を、ページ遷移や別の録画でも引き継ぐ | [報告](ADDITIONAL-FEATURES.md)／[パッチ](quality-persistence.patch) |
 | 視聴状態のサーバー一元化・未視聴バッジ | 再生の最大到達位置をサーバー側で保持して世帯で共有し、一覧カードに未視聴バッジを表示。端末やログイン状態によらず同じ判定になる | [報告](ADDITIONAL-FEATURES.md)／[パッチ](watched-state.patch) |
+| ログイン時の設定の自動取り込み | 未同期の端末でログインしたとき、サーバーに保存済みの設定があれば自動で反映し、デバイス間同期を有効化する | [報告](ADDITIONAL-FEATURES.md)／[パッチ](settings-autoload-on-login.patch) |
 
 改造の経緯や詳細な仕様は [LOCAL-CUSTOMIZATIONS.md](LOCAL-CUSTOMIZATIONS.md) にまとめています。周辺ソフトウェア（EPGStation、Mirakurun、pix-userland）を含めた索引は [CUSTOM-FEATURES.md](CUSTOM-FEATURES.md) を参照してください。
 
@@ -31,7 +32,8 @@
 for p in fix pseudo-fullscreen epgstation-integration seek-controls chase-playback \
          chase-card-click-fix episode-nav chapters excitement excitement-fix \
          digest-button-panel trash chase-live-edge recorder-extras ui-adjustments \
-         watched-state quality-persistence program-watch pseudo-fullscreen-layout digest-padding trash-only-deletion; do
+         watched-state quality-persistence program-watch pseudo-fullscreen-layout digest-padding trash-only-deletion \
+         settings-autoload-on-login; do
   git apply $p.patch
 done
 ```

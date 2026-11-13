@@ -1,0 +1,73 @@
+--- a/client/src/main.ts
++++ b/client/src/main.ts
+@@ -150,5 +150,11 @@
+ 
+         // サーバーに保存されている設定データをこのクライアントに同期する
+         await settings_store.syncClientSettingsFromServer();
++
++    } else if (Utils.getAccessToken() !== null) {
++
++        // ローカル改造: 同期が無効な未同期の端末では、サーバーに保存済みの設定があればログイン時に自動で取り込む
++        // (同期が有効化された後は通常の同期パスに移行する。サーバーに保存済みの設定がない場合は何もしない)
++        await settings_store.adoptServerSettingsOnLogin();
+     }
+ }, 3 * 1000);  // 3秒おき
+--- a/client/src/stores/SettingsStore.ts
++++ b/client/src/stores/SettingsStore.ts
+@@ -587,6 +587,14 @@
+  */
+ export let is_syncing_client_settings_from_server: boolean = false;
+ 
++/**
++ * ローカル改造: ログイン時のサーバー設定の自動取り込みを試行済みのアクセストークン
++ * 同じログインセッションでは再試行せず、別のログイン (別のトークン) では改めて試行するために、
++ * 試行済みかどうかではなく試行したトークン自体を保持する
++ * このフラグを Store に含めると Store の更新イベントが発生して意味がないので、やむを得ず Store の外に定義している
++ */
++export let server_settings_adoption_attempted_token: string | null = null;
++
+ 
+ /**
+  * 設定データを共有するストア
+@@ -723,6 +731,41 @@
+             }
+         },
+ 
++        /**
++         * ローカル改造: ログイン時、この端末が未同期 (last_synced_at = 0) で同期が無効な場合に限り、
++         * サーバーに保存済みの設定データがあれば自動で取り込み、同期を有効化する
++         * 「設定をデバイス間で同期する」が同期対象外の端末ローカル設定であるため、新しい端末や
++         * LocalStorage を初期化した端末では、サーバーに設定が保存されていても自動では反映されなかった問題への対処
++         * 同期を意図的に無効化した端末 (一度でも同期したことがある端末) では何もしない
++         * 試行はログイン (アクセストークン) ごとに一度だけ行う
++         */
++        async adoptServerSettingsOnLogin(): Promise<void> {
++
++            // 未ログイン・試行済み・同期が有効・同期したことがある端末では実行しない
++            const access_token = Utils.getAccessToken();
++            if (access_token === null || server_settings_adoption_attempted_token === access_token ||
++                this.settings.sync_settings === true || this.settings.last_synced_at !== 0) {
++                return;
++            }
++            server_settings_adoption_attempted_token = access_token;
++
++            // サーバーに保存済みの設定データがあるか (最終同期時刻が 0 でないか) を確認する
++            // 未保存のアカウントではサーバーはデフォルト値 (last_synced_at = 0) を返すため、その場合は何もしない
++            const settings_server = await Settings.fetchClientSettings();
++            if (settings_server === null || settings_server.last_synced_at === 0) {
++                return;
++            }
++
++            // サーバーの設定データをこのクライアントに同期する (同期が無効でも強制実行する)
++            await this.syncClientSettingsFromServer(true);
++
++            // 取り込みが完了していたら、この端末でも同期を有効化する
++            if (this.settings.last_synced_at > 0) {
++                this.settings.sync_settings = true;
++                console.log('Adopted client settings from server and enabled sync_settings.');
++            }
++        },
++
+         /**
+          * ログイン時かつ同期が有効な場合、このクライアントの設定をサーバーに同期する
+          * @param force ログイン中なら同期が有効かに関わらず実行する (デフォルト: false)
