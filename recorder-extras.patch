@@ -504,7 +504,7 @@ index 9df1565..4bc1bd7 100644
          };
      },
      computed: {
-@@ -137,6 +156,60 @@ export default defineComponent({
+@@ -137,6 +156,67 @@ export default defineComponent({
          toggleDigest(): void {
              this.playerStore.event_emitter.emit('DigestToggleRequest', {});
          },
@@ -514,7 +514,14 @@ index 9df1565..4bc1bd7 100644
 +                return;
 +            }
 +            const program = this.playerStore.recorded_program;
-+            const keyword = program.series_title || program.title;
++            // 検索キーワードはタイトルから [字][解] などのマークと話数表記 (#5 / 第N話) を除いたものを使う
++            // (来週分のタイトルには話数表記が含まれないことが多く、そのままだと検索に一致しないため)
++            const keyword = (program.series_title || program.title)
++                .replace(/\[[^\]]*\]/g, '')
++                .replace(/#\s*\d+/g, '')
++                .replace(/第\s*\d+\s*[話回]/g, '')
++                .replace(/\s+/g, ' ')
++                .trim() || program.title;
 +            this.is_reserving_next = true;
 +            try {
 +                const condition: IProgramSearchCondition = {
