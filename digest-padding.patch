@@ -1,0 +1,78 @@
+diff --git a/client/src/services/CommentHighlights.ts b/client/src/services/CommentHighlights.ts
+index 293a918..150572b 100644
+--- a/client/src/services/CommentHighlights.ts
++++ b/client/src/services/CommentHighlights.ts
+@@ -24,6 +24,10 @@ const MAX_GAP_BINS = 2;
+ const MIN_SEGMENT_BINS = 3;
+ // 区間の合計がこの比率を超えたら盛り上がり区間として扱わない
+ const MAX_COVERAGE_RATIO = 0.7;
++// 区間の前後に付ける余白 (秒)。実況コメントは映像より遅れて付くため開始側を長めに取り、
++// 相撲の取組のように瞬間的に決まる場面でも、始まりから決着の余韻まで含める
++const SEGMENT_PAD_START_SECONDS = 15;
++const SEGMENT_PAD_END_SECONDS = 10;
+ 
+ /** 盛り上がり区間 */
+ export interface IHighlightSegment {
+@@ -141,7 +145,21 @@ export function extractHighlightSegments(density: ICommentDensity): IHighlightSe
+     if (density.duration > 0 && covered / density.duration > MAX_COVERAGE_RATIO) {
+         return [];
+     }
+-    return segments;
++    // 区間に前後の余白を付け、重なった区間はまとめる
++    const padded: IHighlightSegment[] = [];
++    for (const segment of segments) {
++        const start = Math.max(0, segment.start - SEGMENT_PAD_START_SECONDS);
++        const end = Math.min(density.duration, segment.end + SEGMENT_PAD_END_SECONDS);
++        const last = padded[padded.length - 1];
++        if (last && start <= last.end) {
++            last.end = Math.max(last.end, end);
++            last.peak_density = Math.max(last.peak_density, segment.peak_density);
++            last.comment_count += segment.comment_count;
++        } else {
++            padded.push({ start, end, peak_density: segment.peak_density, comment_count: segment.comment_count });
++        }
++    }
++    return padded;
+ }
+ 
+ 
+diff --git a/client/src/services/player/managers/ExcitementManager.ts b/client/src/services/player/managers/ExcitementManager.ts
+index 077f296..be08f9b 100644
+--- a/client/src/services/player/managers/ExcitementManager.ts
++++ b/client/src/services/player/managers/ExcitementManager.ts
+@@ -29,8 +29,12 @@ class ExcitementManager implements PlayerManager {
+     private static readonly MAX_GAP_BINS = 2;
+     // 盛り上がり区間が全体のこの割合を超える場合はダイジェストの意味がないため区間なしとする
+     private static readonly MAX_COVERAGE_RATIO = 0.7;
+-    // ダイジェスト再生で区間開始位置より手前から再生する秒数 (文脈の前置き)
+-    private static readonly PREROLL_SECONDS = 3;
++    // 盛り上がり区間の前後に付ける余白 (秒)。実況コメントは映像より遅れて付くため開始側を長めに取り、
++    // 相撲の取組のように瞬間的に決まる場面でも、始まりから決着の余韻まで含める
++    private static readonly SEGMENT_PAD_START_SECONDS = 15;
++    private static readonly SEGMENT_PAD_END_SECONDS = 10;
++    // ダイジェスト再生で区間開始位置より手前から再生する秒数 (区間自体に余白を含むため 0)
++    private static readonly PREROLL_SECONDS = 0;
+ 
+     // DPlayer のインスタンス
+     private readonly player: DPlayer;
+@@ -228,7 +232,19 @@ class ExcitementManager implements PlayerManager {
+         if (this.duration > 0 && covered / this.duration > ExcitementManager.MAX_COVERAGE_RATIO) {
+             return [];
+         }
+-        return segments;
++        // 区間に前後の余白を付け、重なった区間はまとめる
++        const padded: { start: number; end: number }[] = [];
++        for (const segment of segments) {
++            const start = Math.max(0, segment.start - ExcitementManager.SEGMENT_PAD_START_SECONDS);
++            const end = Math.min(this.duration, segment.end + ExcitementManager.SEGMENT_PAD_END_SECONDS);
++            const last = padded[padded.length - 1];
++            if (last && start <= last.end) {
++                last.end = Math.max(last.end, end);
++            } else {
++                padded.push({ start, end });
++            }
++        }
++        return padded;
+     }
+ 
+ 

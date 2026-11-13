@@ -4,7 +4,7 @@ KonomiTV v0.14.1 への追加改造 7 パッチの報告です。[RECORDER-FEATU
 
 ```bash
 for p in trash chase-live-edge recorder-extras ui-adjustments \
-         quality-persistence program-watch pseudo-fullscreen-layout; do
+         quality-persistence program-watch pseudo-fullscreen-layout digest-padding; do
   git apply $p.patch
 done
 ```
@@ -46,3 +46,7 @@ done
 ## pseudo-fullscreen-layout.patch — 疑似フルスクリーンの回転レイアウト追従
 
 疑似フルスクリーン（pseudo-fullscreen.patch）の続編にあたる、回転時のレイアウト追従まわり（終了ボタンの表示、レイアウトマネージャ、シーク・音量のイベント連携）。切り出しの都合で別パッチになっていたもの。
+
+## digest-padding.patch — 盛り上がり区間の前後余白
+
+ダイジェスト再生・見どころ・ハイライト横断再生で使う盛り上がり区間に、開始 −15 秒・終了 +10 秒の余白を付ける。実況コメントは映像より遅れて盛り上がるため、従来の区間そのままだと、相撲の取組のように一瞬で決まる場面で勝負の瞬間が区間の端に寄りすぎていた。区間の抽出側（ExcitementManager と CommentHighlights の両方）で余白を付けてから重なりをマージする。
