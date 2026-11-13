@@ -1,0 +1,275 @@
+diff --git a/client/src/components/Watch/Panel/RecordedProgram.vue b/client/src/components/Watch/Panel/RecordedProgram.vue
+index 4bc1bd7..3fd7daf 100644
+--- a/client/src/components/Watch/Panel/RecordedProgram.vue
++++ b/client/src/components/Watch/Panel/RecordedProgram.vue
+@@ -80,6 +80,12 @@
+                     <Icon icon="fluent:calendar-clock-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
+                     <span style="margin-left: 6px;">次回を予約</span>
+                 </div>
++                <div v-ripple class="program-info__button"
++                    :class="{'program-info__button--digest-active': sleep_timer_mode !== 'off'}"
++                    @click="cycleSleepTimer">
++                    <Icon icon="fluent:timer-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
++                    <span style="margin-left: 6px;">{{sleepTimerLabel}}</span>
++                </div>
+             </div>
+         </section>
+         <section class="program-detail-container">
+@@ -134,6 +140,10 @@ export default defineComponent({
+ 
+             // 次回予約の実行中フラグ
+             is_reserving_next: false,
++
++            // おやすみタイマーの状態 (SleepTimerManager から SleepTimerStateChanged で通知される)
++            sleep_timer_mode: 'off' as 'off' | 'minutes' | 'end',
++            sleep_timer_remaining: null as number | null,
+         };
+     },
+     computed: {
+@@ -145,6 +155,19 @@ export default defineComponent({
+                 item.type === 'RecordedProgram' && item.id === this.playerStore.recorded_program.id
+             );
+         },
++
++        // おやすみタイマーボタンのラベル
++        sleepTimerLabel(): string {
++            if (this.sleep_timer_mode === 'end') {
++                return 'おやすみ (番組の終わりで停止)';
++            }
++            if (this.sleep_timer_mode === 'minutes' && this.sleep_timer_remaining !== null) {
++                const minutes = Math.floor(this.sleep_timer_remaining / 60);
++                const seconds = this.sleep_timer_remaining % 60;
++                return `おやすみ (残り ${minutes}:${seconds.toString().padStart(2, '0')})`;
++            }
++            return 'おやすみタイマー';
++        },
+     },
+     methods: {
+         // 指定された録画番組の視聴画面へ移動する (前の話・次の話ボタン用)
+@@ -156,6 +179,10 @@ export default defineComponent({
+         toggleDigest(): void {
+             this.playerStore.event_emitter.emit('DigestToggleRequest', {});
+         },
++        // おやすみタイマーのモード切り替えをプレイヤー側 (SleepTimerManager) へ依頼する
++        cycleSleepTimer(): void {
++            this.playerStore.event_emitter.emit('SleepTimerCycleRequest', {});
++        },
+         // 次回放送 (来週分) を番組表から検索し、デフォルトの録画設定で予約する
+         async reserveNextBroadcast(): Promise<void> {
+             if (this.is_reserving_next) {
+@@ -241,11 +268,17 @@ export default defineComponent({
+             this.digest_available = state.available;
+             this.digest_active = state.active;
+         });
++        // おやすみタイマーの状態 (モードと残り時間) を受け取る
++        this.playerStore.event_emitter.on('SleepTimerStateChanged', (state: {mode: 'off' | 'minutes' | 'end'; remaining_seconds: number | null}) => {
++            this.sleep_timer_mode = state.mode;
++            this.sleep_timer_remaining = state.remaining_seconds;
++        });
+     },
+     beforeUnmount() {
+         // CommentReceived イベントの全てのイベントハンドラーを削除
+         this.playerStore.event_emitter.off('CommentReceived');
+         this.playerStore.event_emitter.off('DigestStateChanged');
++        this.playerStore.event_emitter.off('SleepTimerStateChanged');
+     },
+ });
+ 
+@@ -381,6 +414,7 @@ export default defineComponent({
+             align-items: center;
+             padding: 5px 8px;
+             margin-top: 16px;
++            margin-right: 10px;
+             color: rgb(var(--v-theme-text-darken-1));
+             font-size: 12.7px;
+             line-height: 170%;
+diff --git a/client/src/services/player/managers/SeekControlManager.ts b/client/src/services/player/managers/SeekControlManager.ts
+index 1ea8d68..6c33911 100644
+--- a/client/src/services/player/managers/SeekControlManager.ts
++++ b/client/src/services/player/managers/SeekControlManager.ts
+@@ -8,7 +8,7 @@ import useSettingsStore from '@/stores/SettingsStore';
+ /**
+  * ビデオ視聴時のスキップ (秒送り/秒戻し) ボタンと高速シーク、再生速度の永続化を提供する PlayerManager
+  * ローカル改造 (2026-11-13): 家庭用レコーダー風の操作系を追加するために新設
+- * - コントロールバーに [30秒戻し] [10秒戻し] [再生] [10秒送り] [30秒送り] の並びでボタンを配置する
++ * - コントロールバーに [60秒戻し] [10秒戻し] [再生] [10秒送り] [30秒送り] [60秒送り] の並びでボタンを配置する
+  *   (中央の再生ボタンの隣が 10秒戻し / 30秒送り になる初期配置)
+  * - 短押し: 設定秒数のスキップ (連続タップは 220ms 以内を合算して 1 回のシークにまとめる)
+  * - 長押し (480ms 以上): 8倍相当の高速シーク (0.25 秒ごとに 2 秒進める/戻す、音声はミュート)
+@@ -89,13 +89,14 @@ class SeekControlManager implements PlayerManager {
+         const backward_seconds = settings_store.settings.video_seek_backward_seconds;
+         const forward_seconds = settings_store.settings.video_seek_forward_seconds;
+ 
+-        // 再生ボタンの前に 30秒戻し / (設定秒数)戻し を挿入
+-        const back_large = this.createSkipButton(-30, '30秒戻し');
++        // 再生ボタンの前に 60秒戻し / (設定秒数)戻し を挿入
++        // (外側は固定で大きめのジャンプ用。内側の設定秒数 (初期値 30秒送り) と値が重ならないよう 60 秒にしている)
++        const back_large = this.createSkipButton(-60, '60秒戻し');
+         const back_small = this.createSkipButton(-backward_seconds, `${backward_seconds}秒戻し`);
+         play_icon.before(back_large, back_small);
+-        // 再生ボタンの後に (設定秒数)送り / 30秒送り を挿入
++        // 再生ボタンの後に (設定秒数)送り / 60秒送り を挿入
+         const forward_small = this.createSkipButton(forward_seconds, `${forward_seconds}秒送り`);
+-        const forward_large = this.createSkipButton(30, '30秒送り');
++        const forward_large = this.createSkipButton(60, '60秒送り');
+         play_icon.after(forward_small, forward_large);
+         this.buttons = [back_large, back_small, forward_small, forward_large];
+ 
+diff --git a/client/src/services/player/managers/SleepTimerManager.ts b/client/src/services/player/managers/SleepTimerManager.ts
+index 90be7b5..89472bc 100644
+--- a/client/src/services/player/managers/SleepTimerManager.ts
++++ b/client/src/services/player/managers/SleepTimerManager.ts
+@@ -2,14 +2,19 @@ import DPlayer from 'dplayer';
+ 
+ import PlayerManager from '@/services/player/PlayerManager';
+ import { sleep_timer_state } from '@/services/player/SleepTimerState';
++import usePlayerStore from '@/stores/PlayerStore';
+ 
+ /**
+  * おやすみタイマー (ローカル改造)
+  *
+- * プレイヤーのコントロールにタイマーボタンを追加し、タップするたびに
+- * オフ → 15分 → 30分 → 60分 → (録画再生時のみ) 番組の終わりで停止 → オフ と切り替える。
+- * 時間が来たら再生を一時停止する。「番組の終わりで停止」は SleepTimerState 経由で
++ * タップ/クリックのたびに オフ → 15分 → 30分 → 60分 → (録画再生時のみ) 番組の終わりで停止 → オフ
++ * と切り替える。時間が来たら再生を一時停止する。「番組の終わりで停止」は SleepTimerState 経由で
+  * AutoPlayNextManager に伝わり、次の話の自動再生を抑止する形で実現する。
++ *
++ * 操作 UI の置き場所は再生モードで異なる:
++ * - 録画再生 (Video): プレイヤーは詰め込みすぎになるため、番組情報パネルのボタンから
++ *   PlayerStore イベント (SleepTimerCycleRequest / SleepTimerStateChanged) 経由で操作する
++ * - ライブ視聴 (Live): パネル側に置き場所がないため、プレイヤーのコントロールにボタンを出す
+  */
+ class SleepTimerManager implements PlayerManager {
+ 
+@@ -22,8 +27,9 @@ class SleepTimerManager implements PlayerManager {
+     // 再生モード (Live: ライブ視聴, Video: ビデオ視聴)
+     private readonly playback_mode: 'Live' | 'Video';
+ 
+-    // タイマーボタンと、選択中のモード、残り時間 (秒, null は未設定)
++    // タイマーボタン (ライブ視聴時のみ) と、選択中のモード、残り時間 (秒, null は未設定)
+     private button: HTMLButtonElement | null = null;
++    private cycle_request_handler: (() => void) | null = null;
+     private mode_index = 0;
+     private remaining_seconds: number | null = null;
+     private stop_at_end = false;
+@@ -37,30 +43,37 @@ class SleepTimerManager implements PlayerManager {
+ 
+     /**
+      * SleepTimerManager を初期化する
+-     * 再生ボタンの並びにタイマーボタンを追加する
++     * 録画再生ではパネル側ボタンからのイベントを待ち受け、ライブ視聴ではプレイヤーにボタンを追加する
+      */
+     public async init(): Promise<void> {
+-        // 万が一すでにボタンが存在していた場合は削除する
+-        for (const element of this.player.container.querySelectorAll('.konomi-sleep-timer-button')) {
+-            element.remove();
+-        }
+-        const play_icon = this.player.container.querySelector('.dplayer-play-icon');
+-        if (play_icon === null || play_icon.parentElement === null) {
+-            return;
++        if (this.playback_mode === 'Video') {
++            // 番組情報パネルのおやすみタイマーボタンからの切替要求を受け付ける
++            this.cycle_request_handler = () => this.cycleMode();
++            usePlayerStore().event_emitter.on('SleepTimerCycleRequest', this.cycle_request_handler);
++            this.emitState();
++        } else {
++            // 万が一すでにボタンが存在していた場合は削除する
++            for (const element of this.player.container.querySelectorAll('.konomi-sleep-timer-button')) {
++                element.remove();
++            }
++            const play_icon = this.player.container.querySelector('.dplayer-play-icon');
++            if (play_icon === null || play_icon.parentElement === null) {
++                return;
++            }
++            const button = document.createElement('button');
++            button.type = 'button';
++            button.className = 'konomi-sleep-timer-button';
++            button.style.cssText = 'margin-left: 8px; padding: 3px 9px; border-radius: 999px;' +
++                'border: 1px solid rgba(255,255,255,0.4); background: rgba(0,0,0,0.3); color: #fff;' +
++                'font-size: 11px; line-height: 1.4; cursor: pointer; white-space: nowrap;';
++            button.addEventListener('click', (event) => {
++                event.stopPropagation();
++                this.cycleMode();
++            });
++            play_icon.parentElement.appendChild(button);
++            this.button = button;
++            this.updateLabel();
+         }
+-        const button = document.createElement('button');
+-        button.type = 'button';
+-        button.className = 'konomi-sleep-timer-button';
+-        button.style.cssText = 'margin-left: 8px; padding: 3px 9px; border-radius: 999px;' +
+-            'border: 1px solid rgba(255,255,255,0.4); background: rgba(0,0,0,0.3); color: #fff;' +
+-            'font-size: 11px; line-height: 1.4; cursor: pointer; white-space: nowrap;';
+-        button.addEventListener('click', (event) => {
+-            event.stopPropagation();
+-            this.cycleMode();
+-        });
+-        play_icon.parentElement.appendChild(button);
+-        this.button = button;
+-        this.updateLabel();
+ 
+         this.ticker = setInterval(() => this.onTick(), 1000);
+     }
+@@ -74,6 +87,10 @@ class SleepTimerManager implements PlayerManager {
+             clearInterval(this.ticker);
+             this.ticker = null;
+         }
++        if (this.cycle_request_handler !== null) {
++            usePlayerStore().event_emitter.off('SleepTimerCycleRequest', this.cycle_request_handler);
++            this.cycle_request_handler = null;
++        }
+         if (this.button !== null) {
+             this.button.remove();
+             this.button = null;
+@@ -96,6 +113,7 @@ class SleepTimerManager implements PlayerManager {
+         this.remaining_seconds = (mode === '15' || mode === '30' || mode === '60') ? parseInt(mode) * 60 : null;
+         sleep_timer_state.stop_at_end = this.stop_at_end;
+         this.updateLabel();
++        this.emitState();
+         if (this.stop_at_end) {
+             this.player.notice('おやすみタイマー: この番組の終わりで停止します');
+         } else if (this.remaining_seconds !== null) {
+@@ -116,10 +134,23 @@ class SleepTimerManager implements PlayerManager {
+         this.remaining_seconds -= 1;
+         if (this.remaining_seconds <= 0) {
+             this.remaining_seconds = null;
++            this.mode_index = 0;
+             this.player.pause();
+             this.player.notice('おやすみタイマーで停止しました');
+         }
+         this.updateLabel();
++        this.emitState();
++    }
++
++
++    /**
++     * 現在の状態を番組情報パネルへ通知する (録画再生時のみ意味を持つ)
++     */
++    private emitState(): void {
++        usePlayerStore().event_emitter.emit('SleepTimerStateChanged', {
++            mode: this.stop_at_end ? 'end' : (this.remaining_seconds !== null ? 'minutes' : 'off'),
++            remaining_seconds: this.remaining_seconds,
++        });
+     }
+ 
+ 
+diff --git a/client/src/stores/PlayerStore.ts b/client/src/stores/PlayerStore.ts
+index 42ef3d7..f0f31b4 100644
+--- a/client/src/stores/PlayerStore.ts
++++ b/client/src/stores/PlayerStore.ts
+@@ -63,6 +63,13 @@ export type PlayerEvents = {
+         available: boolean;  // 盛り上がり区間が存在し、ダイジェスト再生が可能か
+         active: boolean;  // ダイジェスト再生が有効か
+     }
++    // 録画再生時: UI コンポーネントからおやすみタイマーのモード切り替えを要求する (ローカル改造)
++    SleepTimerCycleRequest: Record<string, never>;
++    // 録画再生時: SleepTimerManager からおやすみタイマーの状態を UI コンポーネントへ通知する (ローカル改造)
++    SleepTimerStateChanged: {
++        mode: 'off' | 'minutes' | 'end';  // オフ / 時間指定 / 番組の終わりで停止
++        remaining_seconds: number | null;  // 時間指定の残り時間 (秒)
++    }
+ };
+ 
+ 

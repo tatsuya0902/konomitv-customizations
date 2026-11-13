@@ -1,0 +1,243 @@
+diff --git a/client/src/services/player/PlayerController.ts b/client/src/services/player/PlayerController.ts
+index cf872f2..92114ba 100644
+--- a/client/src/services/player/PlayerController.ts
++++ b/client/src/services/player/PlayerController.ts
+@@ -11,6 +11,7 @@ import CustomBufferController from '@/services/player/CustomBufferController';
+ import CaptureManager from '@/services/player/managers/CaptureManager';
+ import DocumentPiPManager from '@/services/player/managers/DocumentPiPManager';
+ import ExcitementManager from '@/services/player/managers/ExcitementManager';
++import ChasePlaybackManager from '@/services/player/managers/ChasePlaybackManager';
+ import KeyboardShortcutManager from '@/services/player/managers/KeyboardShortcutManager';
+ import LiveCommentManager from '@/services/player/managers/LiveCommentManager';
+ import LiveDataBroadcastingManager from '@/services/player/managers/LiveDataBroadcastingManager';
+@@ -998,6 +999,7 @@ class PlayerController {
+                 new MediaSessionManager(this.player, this.playback_mode),
+                 new SeekControlManager(this.player, this.playback_mode),
+                 new ExcitementManager(this.player, this.playback_mode),
++                new ChasePlaybackManager(this.player, this.playback_mode),
+             ];
+         }
+ 
+diff --git a/client/src/services/player/managers/ChasePlaybackManager.ts b/client/src/services/player/managers/ChasePlaybackManager.ts
+new file mode 100644
+index 0000000..f1f9431
+--- /dev/null
++++ b/client/src/services/player/managers/ChasePlaybackManager.ts
+@@ -0,0 +1,217 @@
++import DPlayer from 'dplayer';
++
++import PlayerManager from '@/services/player/PlayerManager';
++import Videos from '@/services/Videos';
++import usePlayerStore from '@/stores/PlayerStore';
++
++/**
++ * 追いかけ再生で録画の先端に追いついたあとも、ライブ視聴のように再生が流れ続けるようにする PlayerManager
++ * (ローカル改造)
++ *
++ * 録画中 (Recording) の録画を開いた場合のみ有効になる。やることは3つ:
++ * - 先端に追いついたら、その旨を通知する (以降は新セグメントの到着に合わせて再生が続く)
++ * - 先端でバッファ切れのまま止まったり、終了扱い (ended) になったりした場合は、先端へ戻して再生を再開する
++ * - 録画の状態を定期的に確認し、録画が完了したら通常の録画再生 (VOD) の挙動に任せる
++ * ユーザーが明示的に一時停止した場合は、そのまま尊重して自動再開しない。
++ */
++class ChasePlaybackManager implements PlayerManager {
++
++    // ユーザー操作により DPlayer 側で画質が切り替わった際、この PlayerManager の再起動が必要かどうかを示す値
++    public readonly restart_required_when_quality_switched = false;
++
++    // 先端とみなす距離 (秒)
++    private static readonly EDGE_THRESHOLD_SECONDS = 3;
++    // 先端チェックの間隔 (ミリ秒)
++    private static readonly TICK_MS = 2000;
++    // 録画状態の確認間隔 (ミリ秒)
++    private static readonly STATUS_POLL_MS = 30000;
++    // 先端でこの時間止まったら復旧を試みる (ミリ秒)
++    private static readonly STALL_RECOVER_MS = 6000;
++
++    // DPlayer のインスタンス
++    private readonly player: DPlayer;
++
++    // 再生モード (Live: ライブ視聴, Video: ビデオ視聴)
++    private readonly playback_mode: 'Live' | 'Video';
++
++    // 視聴中の録画の ID と、録画中かどうかのフラグ
++    private video_id: number | null = null;
++    private is_recording = false;
++
++    // 先端に追従中かどうか (通知を一度だけ出すため) と、先端で止まり始めた時刻
++    private is_following_edge = false;
++    private stall_since: number | null = null;
++
++    // タイマー類と ended リスナー
++    private tick_timer: ReturnType<typeof setInterval> | null = null;
++    private poll_timer: ReturnType<typeof setInterval> | null = null;
++    private on_ended: (() => void) | null = null;
++
++    constructor(player: DPlayer, playback_mode: 'Live' | 'Video') {
++        this.player = player;
++        this.playback_mode = playback_mode;
++    }
++
++
++    /**
++     * ChasePlaybackManager を初期化する
++     * 録画中の録画を開いた場合のみ、先端追従を開始する
++     */
++    public async init(): Promise<void> {
++        if (this.playback_mode !== 'Video') {
++            return;
++        }
++        const program = usePlayerStore().recorded_program;
++        if (!program || program.recorded_video.status !== 'Recording') {
++            return;
++        }
++        this.video_id = program.id;
++        this.is_recording = true;
++
++        // 先端で終了扱いになった場合に備え、ended で先端へ戻して再開する
++        this.on_ended = () => {
++            this.recoverToEdge();
++        };
++        this.player.video.addEventListener('ended', this.on_ended);
++
++        this.tick_timer = setInterval(() => {
++            this.onTick();
++        }, ChasePlaybackManager.TICK_MS);
++        this.poll_timer = setInterval(() => {
++            void this.pollRecordingStatus();
++        }, ChasePlaybackManager.STATUS_POLL_MS);
++    }
++
++
++    /**
++     * ChasePlaybackManager を破棄する
++     */
++    public async destroy(): Promise<void> {
++        if (this.tick_timer !== null) {
++            clearInterval(this.tick_timer);
++            this.tick_timer = null;
++        }
++        if (this.poll_timer !== null) {
++            clearInterval(this.poll_timer);
++            this.poll_timer = null;
++        }
++        if (this.on_ended !== null) {
++            this.player.video.removeEventListener('ended', this.on_ended);
++            this.on_ended = null;
++        }
++        this.is_recording = false;
++    }
++
++
++    /**
++     * 録画の先端 (現時点で再生可能な末尾, 秒) を返す。分からない場合は null
++     */
++    private getEdgeSeconds(): number | null {
++        const video = this.player.video;
++        if (Number.isFinite(video.duration) && video.duration > 0) {
++            return video.duration;
++        }
++        if (video.seekable.length > 0) {
++            return video.seekable.end(video.seekable.length - 1);
++        }
++        return null;
++    }
++
++
++    /**
++     * 先端チェック (2秒ごと)
++     * 先端に到達したら通知し、先端で止まったままの場合は復旧を試みる
++     */
++    private onTick(): void {
++        if (this.is_recording === false) {
++            return;
++        }
++        const video = this.player.video;
++        const edge = this.getEdgeSeconds();
++        if (edge === null) {
++            return;
++        }
++        const at_edge = (edge - video.currentTime) <= ChasePlaybackManager.EDGE_THRESHOLD_SECONDS;
++        if (at_edge === false) {
++            this.is_following_edge = false;
++            this.stall_since = null;
++            return;
++        }
++        // 先端に初めて追いついたら通知する
++        if (this.is_following_edge === false) {
++            this.is_following_edge = true;
++            this.player.notice('録画の先端に追いつきました。そのまま流れ続けます');
++        }
++        // 終了扱いになっていたら復旧する
++        if (video.ended) {
++            this.recoverToEdge();
++            return;
++        }
++        // 再生中のはずなのにバッファ切れで止まったままなら復旧を試みる
++        // (ユーザーが一時停止した場合は paused=true なので対象外)
++        if (video.paused === false && video.readyState <= 2) {
++            if (this.stall_since === null) {
++                this.stall_since = Date.now();
++            } else if (Date.now() - this.stall_since >= ChasePlaybackManager.STALL_RECOVER_MS) {
++                this.stall_since = null;
++                this.recoverToEdge();
++            }
++        } else {
++            this.stall_since = null;
++        }
++    }
++
++
++    /**
++     * 先端へ戻して再生を再開する
++     * hls.js のローダーを蹴り直し、必要なら先端付近へシークしてから play() する
++     */
++    private recoverToEdge(): void {
++        if (this.is_recording === false) {
++            return;
++        }
++        const video = this.player.video;
++        const hls = (this.player.plugins as { hls?: { startLoad?: () => void } } | undefined)?.hls;
++        if (hls && typeof hls.startLoad === 'function') {
++            try {
++                hls.startLoad();
++            } catch {
++                // ローダーの再開に失敗しても、シークと再生の再開は試みる
++            }
++        }
++        const edge = this.getEdgeSeconds();
++        if (edge !== null && (edge - video.currentTime) > 1.5) {
++            this.player.seek(Math.max(0, edge - 0.5));
++        }
++        if (video.paused || video.ended) {
++            video.play().catch(() => {
++                // 自動再生が拒否された場合は何もしない (ユーザー操作で再開できる)
++            });
++        }
++    }
++
++
++    /**
++     * 録画の状態を定期確認し、録画が完了していたら先端追従を終える
++     * (完了後はサーバー側でプレイリストが VOD 化され、通常の終了挙動になる)
++     */
++    private async pollRecordingStatus(): Promise<void> {
++        if (this.video_id === null || this.is_recording === false) {
++            return;
++        }
++        const program = await Videos.fetchVideo(this.video_id);
++        if (program !== null && program.recorded_video.status !== 'Recording') {
++            this.is_recording = false;
++            if (this.tick_timer !== null) {
++                clearInterval(this.tick_timer);
++                this.tick_timer = null;
++            }
++            if (this.poll_timer !== null) {
++                clearInterval(this.poll_timer);
++                this.poll_timer = null;
++            }
++        }
++    }
++}
++
++export default ChasePlaybackManager;

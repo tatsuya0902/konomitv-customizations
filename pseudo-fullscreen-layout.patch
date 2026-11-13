@@ -1,0 +1,326 @@
+diff --git a/client/src/components/Watch/Watch.vue b/client/src/components/Watch/Watch.vue
+index aae90b9..32a960e 100644
+--- a/client/src/components/Watch/Watch.vue
++++ b/client/src/components/Watch/Watch.vue
+@@ -1,6 +1,6 @@
+ <template>
+     <div class="route-container">
+-        <main class="watch-container" :class="{
++        <main ref="watchContainer" class="watch-container" :class="{
+                 'watch-container--control-display': playerStore.is_control_display,
+                 'watch-container--panel-display': Utils.isSmartphoneVertical() || Utils.isTabletVertical() ? true : playerStore.is_panel_display,
+                 'watch-container--fullscreen': playerStore.is_fullscreen,
+@@ -8,6 +8,13 @@
+                 'watch-container--document-pip': playerStore.is_document_pip,
+                 'watch-container--video': playback_mode === 'Video',
+             }">
++            <button v-if="playerStore.is_pseudo_fullscreen" v-show="playerStore.is_control_display" class="pseudo-fullscreen-exit"
++                type="button" aria-label="全画面を終了" title="全画面を終了" @click.stop="exitPseudoFullscreen">
++                <svg class="pseudo-fullscreen-exit__icon" viewBox="0 0 24 24" aria-hidden="true" fill="none">
++                    <path d="M3 9h6V3M15 3v6h6M21 15h-6v6M9 21v-6H3"
++                        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
++                </svg>
++            </button>
+             <WatchNavigation />
+             <div class="watch-content"
+                  @mousemove="playerStore.event_emitter.emit('SetControlDisplayTimer', {event: $event, is_player_region_event: true})"
+@@ -33,6 +40,7 @@ import LShapedScreenCropSettings from '@/components/Watch/LShapedScreenCropSetti
+ import WatchNavigation from '@/components/Watch/Navigation.vue';
+ import WatchPanel from '@/components/Watch/Panel.vue';
+ import WatchPlayer from '@/components/Watch/Player.vue';
++import { CreatePseudoFullscreenLayout } from '@/services/player/PseudoFullscreenLayout';
+ import usePlayerStore from '@/stores/PlayerStore';
+ import useSettingsStore from '@/stores/SettingsStore';
+ import Utils from '@/utils';
+@@ -58,8 +66,16 @@ export default defineComponent({
+         return {
+             // ユーティリティをテンプレートで使えるように
+             Utils: Object.freeze(Utils),
++            pseudoFullscreenCleanup: null as (() => void) | null,
+         };
+     },
++    methods: {
++        // DPlayer の既存終了処理へ戻し、動画や再生位置はそのまま保つ。
++        exitPseudoFullscreen() {
++            const container = this.$refs.watchContainer as HTMLElement | undefined;
++            container?.querySelector<HTMLElement>('.dplayer-full-icon')?.click();
++        },
++    },
+     computed: {
+         ...mapStores(usePlayerStore, useSettingsStore),
+     },
+@@ -69,6 +85,16 @@ export default defineComponent({
+             immediate: true,
+             handler(isPseudoFullscreen: boolean) {
+                 document.documentElement.classList.toggle('watch-pseudo-fullscreen', isPseudoFullscreen);
++                this.pseudoFullscreenCleanup?.();
++                this.pseudoFullscreenCleanup = null;
++                if (isPseudoFullscreen) {
++                    this.$nextTick(() => {
++                        if (!this.playerStore.is_pseudo_fullscreen) return;
++                        this.pseudoFullscreenCleanup?.();
++                        const container = this.$refs.watchContainer as HTMLElement | undefined;
++                        if (container) this.pseudoFullscreenCleanup = CreatePseudoFullscreenLayout(container);
++                    });
++                }
+             },
+         },
+         // 前回視聴画面を開いた際にパネルが表示されていたかどうかを随時保存する
+@@ -102,6 +128,8 @@ export default defineComponent({
+     // 終了前に実行
+     beforeUnmount() {
+ 
++        this.pseudoFullscreenCleanup?.();
++        this.pseudoFullscreenCleanup = null;
+         document.documentElement.classList.remove('watch-pseudo-fullscreen');
+ 
+         // PlayerStore に視聴画面を閉じたことを伝える
+@@ -126,19 +154,20 @@ html.watch-pseudo-fullscreen body {
+ 
+ .watch-container.watch-container--fullscreen.watch-container--pseudo-fullscreen {
+     position: fixed;
+-    top: 0;
+-    left: 0;
++    top: var(--pseudo-top, 0px);
++    left: var(--pseudo-left, 0px);
+     z-index: 1000;
+     box-sizing: border-box;
+-    width: 100%;
+-    height: 100%;
+-    height: 100dvh;
++    min-width: 0 !important;
++    min-height: 0 !important;
++    width: var(--pseudo-width, 100%) !important;
++    height: var(--pseudo-height, 100dvh) !important;
+     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+     background: rgb(var(--v-theme-black));
+     transition: none;
+ 
+     // パネルの保存済み表示設定は変えず、この表示中だけ映像領域を優先する
+-    .watch-navigation, .watch-header, .watch-panel, .watch-player__button {
++    .watch-navigation, .watch-panel {
+         display: none !important;
+     }
+     .watch-content, .watch-player, .watch-player__dplayer {
+@@ -152,6 +181,60 @@ html.watch-pseudo-fullscreen body {
+     }
+ }
+ 
++// 縦長 viewport のときだけ外側コンテナを一度回転し、字幕・情報・操作 UI をまとめて配置する。
++.watch-container.watch-container--fullscreen.watch-container--pseudo-fullscreen[data-pseudo-rotated="true"] {
++    transform: rotate(90deg);
++    transform-origin: top left;
++    padding: env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left) env(safe-area-inset-top);
++}
++
++// 端末の縮小表示でもタップしやすい、独立した終了ボタン。
++.pseudo-fullscreen-exit {
++    position: absolute;
++    top: calc(env(safe-area-inset-top) + var(--pseudo-exit-size, 48px) * 1.25);
++    right: calc(env(safe-area-inset-right) + var(--pseudo-exit-size, 48px) * .25);
++    z-index: 20;
++    display: flex;
++    align-items: center;
++    justify-content: center;
++    width: var(--pseudo-exit-size, 48px);
++    height: var(--pseudo-exit-size, 48px);
++    padding: 0;
++    border: 0;
++    border-radius: 6px;
++    background: transparent;
++    color: rgb(var(--v-theme-text));
++    opacity: .8;
++    line-height: 1;
++    cursor: pointer;
++    touch-action: manipulation;
++    &:hover, &:focus-visible { opacity: 1; background: rgba(255, 255, 255, .08); }
++    &:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
++    &__icon {
++        width: calc(var(--pseudo-exit-size, 48px) * .5);
++        height: calc(var(--pseudo-exit-size, 48px) * .5);
++        filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .65));
++    }
++}
++
++[data-pseudo-rotated="true"] .pseudo-fullscreen-exit {
++    top: calc(env(safe-area-inset-right) + var(--pseudo-exit-size, 48px) * 1.25);
++    right: calc(env(safe-area-inset-bottom) + var(--pseudo-exit-size, 48px) * .25);
++}
++
++.pseudo-rotated-range {
++    position: absolute;
++    inset: 0;
++    width: 100%;
++    height: 100%;
++    min-height: 20px;
++    margin: 0;
++    z-index: 2;
++    opacity: .001;
++    cursor: pointer;
++    &:focus-visible { opacity: 1; outline: 2px solid currentColor; }
++    &[hidden] { display: none !important; }
++}
+ // 上書きしたいスタイル
+ 
+ // コントロール表示時
+diff --git a/client/src/services/player/PlayerController.ts b/client/src/services/player/PlayerController.ts
+index f3f42c6..280c75c 100644
+--- a/client/src/services/player/PlayerController.ts
++++ b/client/src/services/player/PlayerController.ts
+@@ -1719,6 +1719,21 @@ class PlayerController {
+                 event.preventDefault();
+             }
+         };
++        // 回転中の標準 range から受け取り、DPlayer の既存シーク・音量処理へ戻す。
++        const pseudo_seek_handler = (event: Event) => {
++            if (!player_store.is_pseudo_fullscreen || !(event instanceof CustomEvent)) return;
++            const position = Number(event.detail);
++            if (Number.isFinite(position) && Number.isFinite(player.video.duration)) {
++                player.seek(Math.max(0, Math.min(position, player.video.duration)));
++            }
++        };
++        const pseudo_volume_handler = (event: Event) => {
++            if (!player_store.is_pseudo_fullscreen || !(event instanceof CustomEvent)) return;
++            const volume = Number(event.detail);
++            if (Number.isFinite(volume)) player.volume(Math.max(0, Math.min(volume, 1)));
++        };
++        document.addEventListener('KonomiPseudoFullscreenSeek', pseudo_seek_handler);
++        document.addEventListener('KonomiPseudoFullscreenVolume', pseudo_volume_handler);
+         document.addEventListener('fullscreenchange', fullscreen_handler);
+         document.addEventListener('webkitfullscreenchange', fullscreen_handler);
+         document.addEventListener('keydown', escape_handler);
+@@ -1726,6 +1741,8 @@ class PlayerController {
+             document.removeEventListener('fullscreenchange', fullscreen_handler);
+             document.removeEventListener('webkitfullscreenchange', fullscreen_handler);
+             document.removeEventListener('keydown', escape_handler);
++            document.removeEventListener('KonomiPseudoFullscreenSeek', pseudo_seek_handler);
++            document.removeEventListener('KonomiPseudoFullscreenVolume', pseudo_volume_handler);
+         };
+     }
+ 
+diff --git a/client/src/services/player/PseudoFullscreenLayout.ts b/client/src/services/player/PseudoFullscreenLayout.ts
+new file mode 100644
+index 0000000..97f8a75
+--- /dev/null
++++ b/client/src/services/player/PseudoFullscreenLayout.ts
+@@ -0,0 +1,120 @@
++/** iOS のデスクトップ表示では iPhone 表記が消えるため、タッチ対応も併せて判定する。 */
++export function IsIOSFullscreenDevice(userAgent: string, platform: string, maxTouchPoints: number, webkitTouchCallout: boolean): boolean {
++    if (/iPhone|iPad|iPod/i.test(userAgent + ' ' + platform)) return true;
++    return maxTouchPoints > 0 && (webkitTouchCallout || /MacIntel|Macintosh/i.test(platform + ' ' + userAgent));
++}
++
++/** ロック状態は推測せず、実際の表示領域が縦長の iPhone だけを回転する。 */
++export function GetPseudoFullscreenGeometry(width: number, height: number, isIPhone: boolean) {
++    const rotated = isIPhone && height > width;
++    return {rotated, width: rotated ? height : width, height: rotated ? width : height};
++}
++
++/** 同じプレイヤー DOM のレイアウトだけを変更する。配信や再生位置には触れない。 */
++export function CreatePseudoFullscreenLayout(container: HTMLElement): () => void {
++    const properties = ['--pseudo-width', '--pseudo-height', '--pseudo-left', '--pseudo-top', '--pseudo-exit-size', 'transform', 'transform-origin'];
++    const previous = properties.map(name => [name, container.style.getPropertyValue(name), container.style.getPropertyPriority(name)]);
++    const previousRotation = container.getAttribute('data-pseudo-rotated');
++    const video = container.querySelector('video');
++    const abort = new AbortController();
++    const ranges: HTMLInputElement[] = [];
++    // DPlayer のドラッグ計算は画面の X 座標を使うため、回転中だけブラウザー標準の range に任せる。
++    // 通常表示・横長表示では元の操作をそのまま使う。
++    const addRange = (selector: string, label: string, kind: 'Seek' | 'Volume') => {
++        const parent = container.querySelector<HTMLElement>(selector);
++        if (!parent || !video) return;
++        const input = document.createElement('input');
++        input.type = 'range';
++        input.className = 'pseudo-rotated-range';
++        input.setAttribute('aria-label', label);
++        input.min = '0';
++        input.step = kind === 'Seek' ? '0.1' : '0.01';
++        const sync = () => {
++            input.max = kind === 'Seek' ? String(Number.isFinite(video.duration) ? video.duration : 0) : '1';
++            input.value = String(kind === 'Seek' ? video.currentTime : video.volume);
++            input.disabled = Number(input.max) === 0;
++        };
++        sync();
++        for (const event of ['timeupdate', 'durationchange', 'volumechange']) {
++            video.addEventListener(event, sync, {signal: abort.signal});
++        }
++        for (const event of ['pointerdown', 'mousedown', 'touchstart', 'click']) {
++            input.addEventListener(event, e => e.stopPropagation(), {signal: abort.signal});
++        }
++        input.addEventListener('keydown', event => {
++            if (event.key !== 'Escape') event.stopPropagation();
++        }, {signal: abort.signal});
++        input.addEventListener('input', () => {
++            container.dispatchEvent(new CustomEvent(`KonomiPseudoFullscreen${kind}`, {bubbles: true, detail: Number(input.value)}));
++        }, {signal: abort.signal});
++        parent.append(input);
++        ranges.push(input);
++    };
++    if (container.classList.contains('watch-container--video')) addRange('.dplayer-bar-wrap', '再生位置', 'Seek');
++    addRange('.dplayer-volume-bar-wrap', '音量', 'Volume');
++    let frame: number | null = null;
++    // iPhone のデスクトップ表示も、iOS のタッチ環境なら回転対象に含める。
++    const isiOSPhone = () => IsIOSFullscreenDevice(navigator.userAgent, navigator.platform,
++        navigator.maxTouchPoints, CSS.supports('-webkit-touch-callout', 'none'));
++    const debug = new URLSearchParams(location.search).get('player_layout_debug') === '1' ? document.createElement('output') : null;
++    if (debug) {
++        debug.style.cssText = 'position:fixed;left:4px;top:4px;z-index:99999;background:#000;color:#fff;font:12px monospace;pointer-events:none;max-width:95vw;white-space:pre-wrap';
++        document.body.append(debug);
++    }
++    const measurements = {shown: '未取得', hidden: '未取得'};
++    const update = () => {
++        frame = null;
++        const viewport = window.visualViewport;
++        const width = viewport?.width ?? window.innerWidth;
++        const height = viewport?.height ?? window.innerHeight;
++        // デスクトップ表示で縮小された場合も、実表示で48px相当のタップ領域を確保する。
++        const scale = Math.max(0.1, viewport?.scale ?? 1);
++        container.style.setProperty('--pseudo-exit-size', `${48 / Math.min(1, scale)}px`);
++        const geometry = GetPseudoFullscreenGeometry(width, height, isiOSPhone());
++        const left = (viewport?.offsetLeft ?? 0) + (geometry.rotated ? width : 0);
++        container.style.setProperty('--pseudo-width', `${geometry.width}px`);
++        container.style.setProperty('--pseudo-height', `${geometry.height}px`);
++        container.style.setProperty('--pseudo-left', `${left}px`);
++        container.style.setProperty('--pseudo-top', `${viewport?.offsetTop ?? 0}px`);
++        // 回転は Safari でも確実にコンテナそのものへ適用し、終了時に元の値へ戻す。
++        container.style.setProperty('transform', geometry.rotated ? 'rotate(90deg)' : 'none', 'important');
++        container.style.setProperty('transform-origin', 'top left', 'important');
++        container.setAttribute('data-pseudo-rotated', String(geometry.rotated));
++        if (debug) {
++            const dimensions = (element: Element | null) => {
++                const rect = element?.getBoundingClientRect();
++                return rect ? `${Math.round(rect.width)}x${Math.round(rect.height)}` : '-';
++            };
++            const state = container.classList.contains('watch-container--control-display') ? 'shown' : 'hidden';
++            measurements[state] = `view=${Math.round(width)}x${Math.round(height)} scale=${scale.toFixed(2)} main=${dimensions(container)} player=${dimensions(container.querySelector('.watch-player__dplayer'))} video=${dimensions(container.querySelector('.dplayer-video-wrap-aspect'))} padding=${getComputedStyle(container).padding}`;
++            debug.textContent = `layout v4 iOS=${isiOSPhone()} rotated=${geometry.rotated}\nUI shown: ${measurements.shown}\nUI hidden: ${measurements.hidden}`;
++        }
++        for (const range of ranges) range.hidden = !geometry.rotated;
++    };
++    const schedule = () => {
++        if (frame === null) frame = requestAnimationFrame(update);
++    };
++    // 診断中だけUI切り替え前後の寸法を記録し、通常視聴には監視を追加しない。
++    const observer = debug ? new MutationObserver(schedule) : null;
++    observer?.observe(container, {attributes: true, attributeFilter: ['class']});
++    window.addEventListener('resize', schedule);
++    window.visualViewport?.addEventListener('resize', schedule);
++    window.visualViewport?.addEventListener('scroll', schedule);
++    update();
++    return () => {
++        if (frame !== null) cancelAnimationFrame(frame);
++        window.removeEventListener('resize', schedule);
++        window.visualViewport?.removeEventListener('resize', schedule);
++        window.visualViewport?.removeEventListener('scroll', schedule);
++        observer?.disconnect();
++        debug?.remove();
++        abort.abort();
++        for (const range of ranges) range.remove();
++        if (previousRotation === null) container.removeAttribute('data-pseudo-rotated');
++        else container.setAttribute('data-pseudo-rotated', previousRotation);
++        for (const [name, value, priority] of previous) {
++            if (value) container.style.setProperty(name, value, priority);
++            else container.style.removeProperty(name);
++        }
++    };
++}
