@@ -15,10 +15,11 @@
 | 場面一覧 | シークバー用タイル画像を場面サムネイルとして並べ、クリックでその場面へシーク | [報告](RECORDER-FEATURES.md)／[パッチ](chapters.patch) |
 | 盛り上がり表示・ダイジェスト再生 | 過去ログコメントの密度グラフをシークバー上に表示し、盛り上がり区間だけを連続再生。ON/OFF は番組情報パネルから | [報告](RECORDER-FEATURES.md)／[パッチ](excitement.patch) ほか |
 | 番組表・予約詳細からの視聴ボタン | 番組表と予約詳細から、放送中の番組を直接視聴画面で開く | [報告](ADDITIONAL-FEATURES.md)／[パッチ](program-watch.patch) |
-| ゴミ箱（削除の猶予） | 削除せず一覧から除外し、7日後に完全削除。復元も可能 | [報告](ADDITIONAL-FEATURES.md)／[パッチ](trash.patch) |
+| ゴミ箱（削除の猶予） | 削除せず一覧から除外し、既定30日（保持期間は環境変数で変更可能）保持して完全削除。復元も可能 | [報告](ADDITIONAL-FEATURES.md)／[パッチ](trash.patch) |
 | 追いかけ再生の先端追従 | 先端に追いついたら通知し、止まったら先端へ戻して自動再開 | [報告](ADDITIONAL-FEATURES.md)／[パッチ](chase-live-edge.patch) |
 | 次話の自動再生・おやすみタイマー・コメント検索・見どころ・未視聴フィルタ・次回予約・今日のハイライト | レコーダー系・コメント系の追加機能一式（視聴画面と録画一覧） | [報告](ADDITIONAL-FEATURES.md)／[パッチ](recorder-extras.patch) |
 | 画質プロファイル・画質の保持 | モバイル回線向けプロファイルのトグルと手動で選んだ画質を、ページ遷移や別の録画でも引き継ぐ | [報告](ADDITIONAL-FEATURES.md)／[パッチ](quality-persistence.patch) |
+| 視聴状態のサーバー一元化・未視聴バッジ | 再生の最大到達位置をサーバー側で保持して世帯で共有し、一覧カードに未視聴バッジを表示。端末やログイン状態によらず同じ判定になる | [報告](ADDITIONAL-FEATURES.md)／[パッチ](watched-state.patch) |
 
 改造の経緯や詳細な仕様は [LOCAL-CUSTOMIZATIONS.md](LOCAL-CUSTOMIZATIONS.md) にまとめています。周辺ソフトウェア（EPGStation、Mirakurun、pix-userland）を含めた索引は [CUSTOM-FEATURES.md](CUSTOM-FEATURES.md) を参照してください。
 
@@ -30,7 +31,7 @@
 for p in fix pseudo-fullscreen epgstation-integration seek-controls chase-playback \
          chase-card-click-fix episode-nav chapters excitement excitement-fix \
          digest-button-panel trash chase-live-edge recorder-extras ui-adjustments \
-         quality-persistence program-watch pseudo-fullscreen-layout digest-padding trash-only-deletion; do
+         watched-state quality-persistence program-watch pseudo-fullscreen-layout digest-padding trash-only-deletion; do
   git apply $p.patch
 done
 ```
