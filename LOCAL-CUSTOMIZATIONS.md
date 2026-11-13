@@ -154,7 +154,7 @@ model_dump への反映を venv 上で確認。クライアントは型検査・
 ### ゴミ箱 (削除の猶予) — b7f5ba2 (サーバー) / 6423717 (クライアント)
 - 2026-11-13 仕様変更 (ユーザー決定): ゴミ箱がある以上、カードからの直接削除は廃止し、完全削除はゴミ箱経由のみとした。録画カードのメニューから「録画ファイルを削除」と削除確認ダイアログを撤去 (削除 API 自体はゴミ箱の完全削除・自動削除と EPGStation 同期のためにサーバー側に残す)
 - server/app/utils/RecordingTrash.py が状態を server/data/recording-trash.json に保持する。登録時はファイル・DB を一切変更せず、一覧 API (VideosAPI) と検索 API から除外するだけ。
-- API は RecorderRouter 配下: GET /api/recorder/trash (ログイン必須)、POST /api/recorder/trash/{video_id} と POST .../restore (管理者のみ)。保持期間は7日で、app.py の repeat_every (1時間間隔) が期限切れを既存の削除経路 (plan→sign→delete) で完全削除する。失敗時は1日先送り。
+- API は RecorderRouter 配下: GET /api/recorder/trash (ログイン必須)、POST /api/recorder/trash/{video_id} と POST .../restore (管理者のみ)。保持期間は既定 30 日 (2026-11-13 に 7 日から延長)。環境変数 KONOMITV_TRASH_RETENTION_DAYS (正の整数・日数) で変更可能で、不正な値の場合は 30 日にフォールバックする。クライアント側の文言は日数を固定せず、ゴミ箱画面に API が返した保持日数を表示する、app.py の repeat_every (1時間間隔) が期限切れを既存の削除経路 (plan→sign→delete) で完全削除する。失敗時は1日先送り。
 - クライアント: カードメニューに「ゴミ箱に移動する」(管理者のみ、保護中は無効)、録画番組一覧に「ゴミ箱を開く」リンク、/videos/trash ビュー (復元・完全削除)。完全削除は既存の削除 API を使い、サーバー側でゴミ箱登録も取り消される。
 - 注意: ゴミ箱内でも EPGStation / Jellyfin 側には通常どおり見える (実削除が猶予される設計のため)。EPGStation 側で先に削除された場合は一覧取得時にエントリを掃除する。
 

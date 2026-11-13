@@ -28,7 +28,7 @@ index de098cc..b1a3d53 100644
 +            <v-card-text class="pt-2 pb-0">
 +                <div class="font-weight-bold mb-2">{{ program.title }}</div>
 +                <div class="mb-4">
-+                    一覧や検索から隠します。ファイル自体は削除されず、7日間はゴミ箱から復元できます。<br>
++                    一覧や検索から隠します。ファイル自体は削除されず、保持期間内はゴミ箱から復元できます。<br>
 +                    期間を過ぎると自動的に完全に削除されます。
 +                </div>
 +            </v-card-text>
@@ -61,12 +61,12 @@ index de098cc..b1a3d53 100644
      }
  };
  
-+// ゴミ箱へ移動 (ローカル改造: ファイルは削除されず、7日間は復元できる)
++// ゴミ箱へ移動 (ローカル改造: ファイルは削除されず、保持期間内は復元できる)
 +const moveToTrash = async () => {
 +    show_trash_confirmation.value = false;
 +    const result = await Videos.moveToTrash(props.program.id);
 +    if (result === true) {
-+        Message.success('ゴミ箱に移動しました。7日間はゴミ箱から復元できます。');
++        Message.success('ゴミ箱に移動しました。保持期間内はゴミ箱から復元できます。');
 +        // 一覧から消える点は削除と同じなので、親には削除イベントを発行する
 +        emit('deleted', props.program.id);
 +    }
@@ -298,7 +298,7 @@ index 0000000..28e2cf9
 +
 +// ゴミ箱の中身
 +const items = ref<ITrashItem[]>([]);
-+const retention_days = ref(7);
++const retention_days = ref(30);
 +const is_loading = ref(true);
 +
 +// 完全削除の確認ダイアログ
@@ -680,25 +680,34 @@ new file mode 100644
 index 0000000..8737a46
 --- /dev/null
 +++ b/server/app/utils/RecordingTrash.py
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,135 @@
 +"""録画のゴミ箱 (削除の猶予期間) の状態管理と、期限切れ録画の自動削除。
 +
 +ローカル改造 (2026-11-13): 市販レコーダーのゴミ箱相当の安全策として新設。
 +削除操作ではファイルや DB は一切変更せず、ここに登録して一覧・検索から隠すだけにとどめる。
-+復元は登録を取り消すだけ、完全削除は保持期間 (7 日) 経過後に既存の削除経路
++復元は登録を取り消すだけ、完全削除は保持期間 (既定 30 日) 経過後に既存の削除経路
 +(EPGStation 委譲) で実行する。状態は DATA_DIR/recording-trash.json に保存する。
 +"""
 +
 +import json
 +import logging
++import os
 +from datetime import datetime, timedelta, timezone
 +from pathlib import Path
 +
 +from app.constants import DATA_DIR
 +
 +
-+# ゴミ箱の保持期間 (日)
-+RETENTION_DAYS = 7
++# ゴミ箱の保持期間 (日): 環境変数 KONOMITV_TRASH_RETENTION_DAYS で変更可能 (既定: 30 日)
++def _retentionDays() -> int:
++    try:
++        days = int(os.environ.get('KONOMITV_TRASH_RETENTION_DAYS', '30'))
++        return days if days > 0 else 30
++    except ValueError:
++        return 30
++
++
++RETENTION_DAYS = _retentionDays()
 +
 +STATE_PATH = DATA_DIR / 'recording-trash.json'
 +
