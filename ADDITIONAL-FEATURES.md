@@ -1,6 +1,6 @@
 # 追加機能パッチ集（ゴミ箱・先端追従・レコーダー追加機能・画質保持ほか）
 
-KonomiTV v0.14.1 への追加改造 7 パッチの報告です。[RECORDER-FEATURES.md](RECORDER-FEATURES.md) までの公開パッチを適用したツリーに対して、以下の順序でそのまま続けて適用できます（全順序の適用と、本番ツリーとの差分が「視聴状態のサーバー一元化」だけになることまで検証済み）。
+KonomiTV v0.14.1 への追加改造 7 パッチの報告です。[RECORDER-FEATURES.md](RECORDER-FEATURES.md) までのパッチを適用したツリーに対して、以下の順序でそのまま続けて適用できます（適用順序は検証済み）。
 
 ```bash
 for p in trash chase-live-edge recorder-extras ui-adjustments \
@@ -45,8 +45,4 @@ done
 
 ## pseudo-fullscreen-layout.patch — 疑似フルスクリーンの回転レイアウト追従
 
-既公開の疑似フルスクリーン（pseudo-fullscreen.patch）の続編にあたる、回転時のレイアウト追従まわり（終了ボタンの表示、レイアウトマネージャ、シーク・音量のイベント連携）。切り出しの都合で別パッチになっていたものを、今回あわせて公開する。
-
-## 公開していないもの
-
-視聴状態のサーバー一元化（未視聴判定を世帯全体で共有する仕組み）だけは、自宅専用のため公開していない。改造内容の説明自体は [LOCAL-CUSTOMIZATIONS.md](LOCAL-CUSTOMIZATIONS.md) に記載している。
+疑似フルスクリーン（pseudo-fullscreen.patch）の続編にあたる、回転時のレイアウト追従まわり（終了ボタンの表示、レイアウトマネージャ、シーク・音量のイベント連携）。切り出しの都合で別パッチになっていたもの。
