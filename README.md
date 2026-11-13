@@ -30,7 +30,7 @@
 for p in fix pseudo-fullscreen epgstation-integration seek-controls chase-playback \
          chase-card-click-fix episode-nav chapters excitement excitement-fix \
          digest-button-panel trash chase-live-edge recorder-extras ui-adjustments \
-         quality-persistence program-watch pseudo-fullscreen-layout digest-padding; do
+         quality-persistence program-watch pseudo-fullscreen-layout digest-padding trash-only-deletion; do
   git apply $p.patch
 done
 ```
