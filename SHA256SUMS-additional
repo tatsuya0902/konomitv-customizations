@@ -21,3 +21,4 @@ eb5f91fe1e8a657183f8a0ead3c6b71bcfa5fe1f80858e7ef74f8f4464402918  tv-nav-nearest
 4521152d68f0c62d9c85daba5b566b2a6695274d6387a848eff691ee4a01fd1a  tv-nav-horizontal-row-overlap.patch
 f9307e7667167a74ef3ecc3e408bc3da42aa4904dab3286407519f95fdb2d1a2  tv-player-menu-keys.patch
 3f103e6e951cb3bc2cd9ddacf46611e1c9e340e82c66196d49de787d4c04f3c7  tv-player-bar-background.patch
+53eca3fe02cb3865b4cc3a854f7da69e0ab69b5127f1d7bf69d29d63c9d006fc  tv-nav-initial-focus-active-link.patch
