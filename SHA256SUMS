@@ -28,3 +28,4 @@ ee99cf8533ca70c968c964158ecc9022ac0c403090e85471575cc886dea9d5e5  tv-control-mod
 0f1793e6ce6be3cb80516b215e5858146b4fd01bd2a97862b4e5a5fdf6ec1e9e  tv-scroll-and-flat-videos.patch
 308f6f8ab60b8f566df9675d9d7a60615505201ebcfc3c47cfbca3e2cd661b16  tv-spatial-navigation-column.patch
 0faff692cbc742ddcfa7c215a460771492e603246d13a4ffe59e905f9d5a5e0b  tv-spatial-navigation-occlusion.patch
+eb5f91fe1e8a657183f8a0ead3c6b71bcfa5fe1f80858e7ef74f8f4464402918  tv-nav-nearest-and-sidebar-start.patch
