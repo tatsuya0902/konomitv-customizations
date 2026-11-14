@@ -1,0 +1,25 @@
+--- a/client/src/utils/TvSpatialNavigation.ts
++++ b/client/src/utils/TvSpatialNavigation.ts
+@@ -40,8 +40,9 @@ const CANDIDATE_SELECTOR = [
+     '[role="tab"]',
+     '[role="menuitem"]',
+     '[role="option"]',
+-    // KonomiTV 固有のクリック要素 (チャンネルのピン留めボタン等、div で実装されているもの)
++    // KonomiTV 固有のクリック要素 (チャンネルのピン留めボタンや検索ボタン等、div で実装されているもの)
+     '.channel__broadcaster-pin',
++    '.search-button',
+ ].join(',');
+ 
+ // 操作モード専用の候補セレクタ:
+@@ -162,7 +163,10 @@ function isVisible(el: HTMLElement): boolean {
+ }
+ 
+ function getCandidates(): HTMLElement[] {
+-    return Array.from(document.querySelectorAll<HTMLElement>(CANDIDATE_SELECTOR)).filter(isVisible);
++    // ロゴ (トップへのリンク) は選択対象にしない (誤って選ぶと一覧から離れてしまうため)
++    return Array.from(document.querySelectorAll<HTMLElement>(CANDIDATE_SELECTOR))
++        .filter((el) => !el.classList.contains('konomitv-logo'))
++        .filter(isVisible);
+ }
+ 
+ function centerOf(rect: RectLike): { x: number; y: number } {
