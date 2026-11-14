@@ -206,7 +206,7 @@
  const { updateServiceWorker } = useRegisterSW({
 --- a/client/src/utils/TvSpatialNavigation.ts
 +++ b/client/src/utils/TvSpatialNavigation.ts
-@@ -0,0 +1,951 @@
+@@ -0,0 +1,959 @@
 +// TvSpatialNavigation.ts
 +// テレビ向け D-pad 空間ナビゲーション
 +//
@@ -498,6 +498,11 @@
 +    const inGrid = (el: HTMLElement | null): boolean =>
 +        el !== null && el.closest('.timetable-grid') !== null;
 +    const preferGrid = pool === undefined && inGrid(exclude) && (dir === 'left' || dir === 'right');
++    // 番組表のセルから左右へ動くときは、チャンネル見出しを後回しにする。
++    // 見出しは中心同士の距離でセルに勝ってしまうことがあり、横移動の
++    // 途中で勝手にチャンネル名のところへ上がってしまうため
++    const preferCells = pool === undefined && exclude !== null
++        && exclude.classList.contains('timetable-program-cell') && (dir === 'left' || dir === 'right');
 +    // 表の右端からさらに右へは、表の外へ飛ばない (右上隅のボタン等が
 +    // 「右にあるもの」として選ばれ、上へ飛んでしまうため)。
 +    // 左端から左はサイドバーへ出る必要があるので、右方向だけ止める
@@ -545,6 +550,9 @@
 +            if (preferGrid && pass === 0 && !inGrid(el)) {
 +                continue;
 +            }
++            if (preferCells && pass === 0 && el.classList.contains('timetable-channel-header')) {
++                continue;
++            }
 +            // 縦移動では、現在の要素と横方向の範囲が重なる候補だけを対象にする
 +            // (右側の一覧を最後までスクロールしたときに、画面下部にある
 +            //  左サイドバーの項目へフォーカスが飛ばないように。
@@ -559,7 +567,7 @@
 +            }
 +        }
 +        if (best !== null || pass === 1
-+            || (!deferChrome && !preferRowOverlap && !preferSameColumn && !preferGrid)) {
++            || (!deferChrome && !preferRowOverlap && !preferSameColumn && !preferGrid && !preferCells)) {
 +            // 表の右端では、表の外の要素が勝っても採用しない
 +            if (best !== null && gridRightEdgeStop && !inGrid(best)) {
 +                return null;
