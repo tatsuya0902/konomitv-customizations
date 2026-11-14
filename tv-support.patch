@@ -206,7 +206,7 @@
  const { updateServiceWorker } = useRegisterSW({
 --- a/client/src/utils/TvSpatialNavigation.ts
 +++ b/client/src/utils/TvSpatialNavigation.ts
-@@ -0,0 +1,1017 @@
+@@ -0,0 +1,1085 @@
 +// TvSpatialNavigation.ts
 +// テレビ向け D-pad 空間ナビゲーション
 +//
@@ -280,6 +280,12 @@
 +
 +let current: HTMLElement | null = null;
 +let lastRect: RectLike | null = null;
++// 番組表で見ている時刻の位置 (スクロール領域内のコンテンツ座標)。
++// 横移動ではこの位置を保ち、縦移動で着いた番組の開始時刻に更新する。
++// 「番組の開始時刻」を基準に横移動を繰り返すと、隣の列でその時刻を
++// 含む番組は必ずそれより前に始まっているため、1回ごとに少しずつ
++// 前の時間へずれていき、やがて何時間も前まで飛ばされてしまう
++let timetableCursor: number | null = null;
 +// サイドバーへ移る直前に本体側でフォーカスしていた要素
 +// (サイドバーから右キーで本体へ戻るときの復帰先)
 +let lastContent: HTMLElement | null = null;
@@ -478,16 +484,21 @@
 +    // 横へ移った先がその分だけ後の時間の番組になってしまう
 +    // (時間が吸われてズレる、と感じる動きになる)
 +    // スコア計算用の矩形。通常は fromRect そのまま。番組表のセルからの
-+    // 左右移動では、時間枠の上端 (開始時刻) 付近の細い帯を基準にする
++    // 左右移動では、「見ている時刻」(時刻カーソル) の細い帯を基準にする
 +    let scoreRect = fromRect;
-+    if (pool === undefined && exclude !== null && exclude.classList.contains('timetable-program-cell')
-+        && (dir === 'left' || dir === 'right') && fromRect.height > 45) {
-+        let top = fromRect.top;
-+        // 前日から続く長い番組は時間枠が表の開始より上から始まっており、
-+        // その上端を基準にすると見ている時間帯と大きくずれてしまう。
-+        // 基準は「今見えている範囲の上端」までに切り詰める
++    const isTimetableHorizontal = pool === undefined && exclude !== null
++        && exclude.classList.contains('timetable-program-cell') && (dir === 'left' || dir === 'right');
++    if (isTimetableHorizontal) {
 +        const area = exclude.closest('.timetable-grid__scroll-area');
++        let top = fromRect.top;
 +        if (area !== null) {
++            if (timetableCursor !== null) {
++                // 時刻カーソルをビューポート座標へ戻す
++                top = timetableCursor + area.getBoundingClientRect().top - area.scrollTop;
++            }
++            // 前日から続く長い番組は時間枠が表の開始より上から始まっており、
++            // その上端を基準にすると見ている時間帯と大きくずれてしまう。
++            // 基準は「今見えている範囲の上端」までに切り詰める
 +            const header = area.querySelector('.timetable-channel-header');
 +            const visibleTop = area.getBoundingClientRect().top
 +                + (header !== null ? header.getBoundingClientRect().height : 0);
@@ -586,7 +597,9 @@
 +            if (pool === undefined && (dir === 'up' || dir === 'down') && (rect.left >= fromRect.right || rect.right <= fromRect.left)) {
 +                continue;
 +            }
-+            const score = scoreFor(scoreRect, rect, dir);
++            const score = isTimetableHorizontal
++                ? timetableHorizontalScore(fromRect, rect, dir, scoreRect.top, scoreRect.bottom)
++                : scoreFor(scoreRect, rect, dir);
 +            if (score !== null && score < bestScore) {
 +                bestScore = score;
 +                best = el;
@@ -601,6 +614,27 @@
 +        }
 +    }
 +    return null;
++}
++
++// 番組表のセル同士の横移動専用のスコア。
++// 列の近さ (主方向の距離) を最優先し、時刻カーソルの帯と候補の
++// 時間枠が離れている分だけペナルティを足す。カーソルを含む番組の
++// ペナルティは 0。遠い列の長い番組がカーソルを「含む」というだけで
++// 隣の列の番組に勝ってしまうことがないようにするための計算
++function timetableHorizontalScore(fromRect: RectLike, rect: RectLike, dir: Direction, bandTop: number, bandBottom: number): number | null {
++    const fc = centerOf(fromRect);
++    const c = centerOf(rect);
++    const dx = dir === 'right' ? c.x - fc.x : fc.x - c.x;
++    if (dx <= 1) {
++        return null;
++    }
++    let mismatch = 0;
++    if (rect.bottom <= bandTop) {
++        mismatch = bandTop - rect.bottom;
++    } else if (rect.top >= bandBottom) {
++        mismatch = rect.top - bandBottom;
++    }
++    return dx + mismatch;
 +}
 +
 +// sticky / fixed のバー (チャンネルのタブバーなど) にフォーカス要素の端が
@@ -970,6 +1004,35 @@
 +    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 +}
 +
++// 番組表の時刻カーソルの更新。セルへ着いたときに呼ぶ。
++// 横移動 (セル→セル) ではカーソルを保ち、それ以外 (縦移動・初回・
++// 表の外からの進入) では着いた番組の開始時刻をカーソルにする。
++// セル以外へ移ったらカーソルは破棄する
++function updateTimetableCursor(dir: Direction, prev: HTMLElement | null, next: HTMLElement): void {
++    const isCell = (el: HTMLElement | null): el is HTMLElement =>
++        el !== null && el.classList.contains('timetable-program-cell');
++    if (!isCell(next)) {
++        timetableCursor = null;
++        return;
++    }
++    if ((dir === 'left' || dir === 'right') && isCell(prev) && timetableCursor !== null) {
++        return;
++    }
++    const area = next.closest('.timetable-grid__scroll-area');
++    if (area === null) {
++        timetableCursor = null;
++        return;
++    }
++    const slot = geometryRect(next);
++    let cursor = slot.top - area.getBoundingClientRect().top + area.scrollTop;
++    // 前日から続く長い番組など、時間枠が今見えている範囲より上から
++    // 始まっている場合は、見えている範囲の上端をカーソルにする
++    const header = area.querySelector('.timetable-channel-header');
++    const visibleContentTop = area.scrollTop + (header !== null ? header.getBoundingClientRect().height : 0);
++    cursor = Math.max(cursor, visibleContentTop);
++    timetableCursor = cursor;
++}
++
 +function onKeyDown(event: KeyboardEvent): void {
 +    const dirMap: Record<string, Direction> = {
 +        ArrowUp: 'up',
@@ -1103,7 +1166,11 @@
 +            ? geometryRect(current)
 +            : lastRect;
 +        if (fromRect === null) {
-+            setFocus(controlMode ? (getControlCandidates()[0] ?? null) : pickInitialFocus());
++            const initial = controlMode ? (getControlCandidates()[0] ?? null) : pickInitialFocus();
++            if (initial !== null) {
++                updateTimetableCursor(dir, null, initial);
++            }
++            setFocus(initial);
 +            return;
 +        }
 +        let next: HTMLElement | null = null;
@@ -1144,6 +1211,7 @@
 +            }
 +        }
 +        if (next !== null) {
++            updateTimetableCursor(dir, current, next);
 +            setFocus(next);
 +        }
 +    } else if (event.key === 'Enter' && active && current !== null && document.contains(current)) {
