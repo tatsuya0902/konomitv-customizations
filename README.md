@@ -22,6 +22,7 @@
 | 視聴状態のサーバー一元化・未視聴バッジ | 再生の最大到達位置をサーバー側で保持して世帯で共有し、一覧カードに未視聴バッジを表示。端末やログイン状態によらず同じ判定になる | [報告](ADDITIONAL-FEATURES.md)／[パッチ](watched-state.patch) |
 | ログイン時の設定の自動取り込み | 未同期の端末でログインしたとき、サーバーに保存済みの設定があれば自動で反映し、デバイス間同期を有効化する | [報告](ADDITIONAL-FEATURES.md)／[パッチ](settings-autoload-on-login.patch) |
 | テレビ向け D-pad 空間ナビゲーション | リモコンの方向キーで項目間を移動し、決定で開く。再生中の決定キーは再生/一時停止になり、一時停止すると操作モードに入って全画面や設定（画質・速度などパネル内も）も操作できる。テレビ向けラッパーでは全画面ボタンがパネルを隠す全画面表示になる | [報告](ADDITIONAL-FEATURES.md)／[パッチ](tv-spatial-navigation.patch) ほか |
+| テレビ操作の改善（スクロール・フラットな録画一覧） | チャンネル一覧など縦に長い一覧を、スクロールしながら最後まで移動できるよう空間ナビの候補判定を修正。「ビデオをみる」はセクション分けのホームではなく録画番組一覧へ直接遷移し、全件をフラットに表示する | [報告](ADDITIONAL-FEATURES.md)／[パッチ](tv-scroll-and-flat-videos.patch) |
 
 改造の経緯や詳細な仕様は [LOCAL-CUSTOMIZATIONS.md](LOCAL-CUSTOMIZATIONS.md) にまとめています。周辺ソフトウェア（EPGStation、Mirakurun、pix-userland）を含めた索引は [CUSTOM-FEATURES.md](CUSTOM-FEATURES.md) を参照してください。
 
@@ -34,7 +35,7 @@ for p in fix pseudo-fullscreen epgstation-integration seek-controls chase-playba
          chase-card-click-fix episode-nav chapters excitement excitement-fix \
          digest-button-panel trash chase-live-edge recorder-extras ui-adjustments \
          watched-state quality-persistence program-watch pseudo-fullscreen-layout digest-padding trash-only-deletion \
-         settings-autoload-on-login tv-spatial-navigation tv-spatial-navigation-fix tv-control-mode-fix; do
+         settings-autoload-on-login tv-spatial-navigation tv-spatial-navigation-fix tv-control-mode-fix tv-scroll-and-flat-videos; do
   git apply $p.patch
 done
 ```
