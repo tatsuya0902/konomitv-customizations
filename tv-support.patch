@@ -206,7 +206,7 @@
  const { updateServiceWorker } = useRegisterSW({
 --- a/client/src/utils/TvSpatialNavigation.ts
 +++ b/client/src/utils/TvSpatialNavigation.ts
-@@ -0,0 +1,1085 @@
+@@ -0,0 +1,1093 @@
 +// TvSpatialNavigation.ts
 +// テレビ向け D-pad 空間ナビゲーション
 +//
@@ -1024,7 +1024,15 @@
 +        return;
 +    }
 +    const slot = geometryRect(next);
-+    let cursor = slot.top - area.getBoundingClientRect().top + area.scrollTop;
++    const areaTop = area.getBoundingClientRect().top;
++    const slotTop = slot.top - areaTop + area.scrollTop;
++    const slotBottom = slot.bottom - areaTop + area.scrollTop;
++    // カーソルは「着いた番組の時間枠の中に収めた、今までの時刻」を使う。
++    // 着くたびに番組の開始時刻へ戻してしまうと、長い番組 (24時間テレビ
++    // 級) の前後で時刻が大きく飛んでしまい、そこから横へ動くと
++    // 全然違う時間帯をブラウズすることになるため
++    let cursor = timetableCursor !== null ? timetableCursor : slotTop;
++    cursor = Math.min(Math.max(cursor, slotTop), Math.max(slotTop, slotBottom - 1));
 +    // 前日から続く長い番組など、時間枠が今見えている範囲より上から
 +    // 始まっている場合は、見えている範囲の上端をカーソルにする
 +    const header = area.querySelector('.timetable-channel-header');
