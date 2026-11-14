@@ -1,0 +1,17 @@
+--- a/client/src/utils/TvSpatialNavigation.ts
++++ b/client/src/utils/TvSpatialNavigation.ts
+@@ -85,11 +85,14 @@ body.${CONTROL_CLASS} .dplayer-controller {
+     opacity: 1 !important;
+     visibility: visible !important;
+     transform: none !important;
++    /* 明るい映像の上では白いアイコンが見えなくなるため、バーに暗い背景を付ける */
++    background: linear-gradient(to top, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0.42)) !important;
+ }
+ body.${CONTROL_CLASS} .watch-player__dplayer.dplayer.dplayer-hide-controller .dplayer-controller {
+     opacity: 1 !important;
+     visibility: visible !important;
+     transform: none !important;
++    background: linear-gradient(to top, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0.42)) !important;
+ }
+ body.${CONTROL_CLASS} .dplayer-controller * {
+     visibility: visible !important;
