@@ -194,7 +194,7 @@
  
  
  // スムーズスクロール周りの API の polyfill を適用
-@@ -59,6 +60,9 @@
+@@ -59,12 +60,29 @@
  // マウントを実行
  app.mount('#app');
  
@@ -204,9 +204,30 @@
  // ***** Service Worker のイベントを登録 *****
  
  const { updateServiceWorker } = useRegisterSW({
+     // Service Worker の登録に成功したとき
+-    onRegisteredSW(registration) {
++    onRegisteredSW(_swScriptUrl, registration) {
+         console.log('Service worker has been registered.');
++        // 開きっぱなしのページ (テレビのラッパーアプリ等) では、ページを
++        // 開き直すまで更新チェックが走らず、古いクライアントのままに
++        // なってしまう。定期的に更新がないか確認し、新しい版があれば
++        // 既存の onNeedRefresh (トースト + 自動リロード) に乗せる
++        if (registration) {
++            window.setInterval(() => {
++                registration.update().catch(() => undefined);
++            }, 10 * 60 * 1000);  // 10分ごと
++            document.addEventListener('visibilitychange', () => {
++                if (document.visibilityState === 'visible') {
++                    registration.update().catch(() => undefined);
++                }
++            });
++        }
+     },
+     // Service Worker の登録に失敗したとき
+     onRegisterError(error) {
 --- a/client/src/utils/TvSpatialNavigation.ts
 +++ b/client/src/utils/TvSpatialNavigation.ts
-@@ -0,0 +1,1093 @@
+@@ -0,0 +1,1117 @@
 +// TvSpatialNavigation.ts
 +// テレビ向け D-pad 空間ナビゲーション
 +//
@@ -1221,6 +1242,30 @@
 +        if (next !== null) {
 +            updateTimetableCursor(dir, current, next);
 +            setFocus(next);
++        } else if (!controlMode && (dir === 'left' || dir === 'right')
++            && current !== null && document.contains(current)
++            && current.classList.contains('timetable-program-cell')) {
++            // 番組表は仮想描画のため、描画済みの列の端では次の列がまだ
++            // 存在せず移動できないことがある。列の分だけ先にスクロール
++            // して描画を促し、少し待ってからもう一度だけ移動を試す
++            const area = current.closest('.timetable-grid__scroll-area');
++            if (area !== null) {
++                const before = area.scrollLeft;
++                area.scrollLeft += dir === 'right' ? 160 : -160;
++                if (area.scrollLeft !== before) {
++                    const prev = current;
++                    window.setTimeout(() => {
++                        if (current !== prev || !document.contains(prev)) {
++                            return;
++                        }
++                        const retry = findNext(geometryRect(prev), dir, prev, undefined);
++                        if (retry !== null) {
++                            updateTimetableCursor(dir, prev, retry);
++                            setFocus(retry);
++                        }
++                    }, 260);
++                }
++            }
 +        }
 +    } else if (event.key === 'Enter' && active && current !== null && document.contains(current)) {
 +        event.preventDefault();
