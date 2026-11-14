@@ -1,0 +1,1251 @@
+--- a/client/src/components/BottomNavigation.vue
++++ b/client/src/components/BottomNavigation.vue
+@@ -5,7 +5,7 @@
+             <Icon icon="fluent:tv-20-regular" width="30px" />
+             <span class="mt-1">テレビをみる</span>
+         </v-btn>
+-        <v-btn class="bottom-navigation-button" to="/videos/"
++        <v-btn class="bottom-navigation-button" to="/videos/programs"
+             :class="{'v-btn--active': $route.path.startsWith('/videos')}">
+             <Icon icon="fluent:movies-and-tv-20-regular" width="30px" />
+             <span class="mt-1">ビデオをみる</span>
+--- a/client/src/components/Navigation.vue
++++ b/client/src/components/Navigation.vue
+@@ -12,7 +12,7 @@
+                         <Icon class="navigation__link-icon" icon="fluent:tv-20-regular" width="26px" />
+                         <span v-if="!iconOnly" class="navigation__link-text">テレビをみる</span>
+                     </router-link>
+-                    <router-link v-ripple class="navigation__link" active-class="navigation__link--active" to="/videos/"
++                    <router-link v-ripple class="navigation__link" active-class="navigation__link--active" to="/videos/programs"
+                         :class="{
+                             'navigation__link--active': $route.path.startsWith('/videos'),
+                             'navigation__link--icon-only': iconOnly,
+--- a/client/src/components/Videos/RecordedProgramList.vue
++++ b/client/src/components/Videos/RecordedProgramList.vue
+@@ -15,27 +15,15 @@
+                 </div>
+             </h2>
+             <div class="recorded-program-list__actions" :class="{'recorded-program-list__actions--mylist': forMylist}">
+-                <v-select v-if="!hideSort"
+-                    v-model="sort_order"
+-                    :items="forMylist ? [
+-                        { title: '追加が新しい順', value: 'mylist_added_desc' },
+-                        { title: '追加が古い順', value: 'mylist_added_asc' },
+-                        { title: '録画が新しい順', value: 'recorded_desc' },
+-                        { title: '録画が古い順', value: 'recorded_asc' },
+-                    ] : [
+-                        { title: '新しい順', value: 'desc' },
+-                        { title: '古い順', value: 'asc' },
+-                    ]"
+-                    item-title="title"
+-                    item-value="value"
+-                    class="recorded-program-list__sort"
+-                    color="primary"
+-                    bg-color="background-lighten-1"
+-                    variant="solo"
+-                    density="comfortable"
+-                    hide-details
+-                    @update:model-value="$emit('update:sortOrder', $event)">
+-                </v-select>
++                <!-- 呼び出し側から見出し行に追加の操作 (フィルタ等) を差し込むためのスロット -->
++                <slot name="actions"></slot>
++                <!-- 並び順はドロップダウンではなく、押すたびに切り替わるボタンにする
++                     (ドロップダウンはテレビのリモコンでは操作しづらいため) -->
++                <button v-if="!hideSort" type="button" class="recorded-program-list__sort-button"
++                    @click="cycleSortOrder">
++                    <span class="recorded-program-list__sort-button-text">{{currentSortTitle}}</span>
++                    <Icon icon="fluent:arrow-swap-24-regular" width="17px" height="17px" />
++                </button>
+                 <v-btn v-if="showMoreButton"
+                     variant="text"
+                     class="recorded-program-list__more"
+@@ -81,7 +69,7 @@
+ </template>
+ <script lang="ts" setup>
+ 
+-import { ref, watch } from 'vue';
++import { computed, ref, watch } from 'vue';
+ import { useRouter } from 'vue-router';
+ 
+ import RecordedProgram from '@/components/Videos/RecordedProgram.vue';
+@@ -129,7 +117,7 @@
+ });
+ 
+ // Emits
+-defineEmits<{
++const emit = defineEmits<{
+     (e: 'update:page', page: number): void;
+     (e: 'update:sortOrder', order: SortOrder | MylistSortOrder): void;
+     (e: 'more'): void;
+@@ -141,6 +129,32 @@
+ // 並び順
+ const sort_order = ref<SortOrder | MylistSortOrder>(props.sortOrder);
+ 
++// 並び順の選択肢
++const sortItems = computed<{title: string; value: SortOrder | MylistSortOrder}[]>(() => props.forMylist ? [
++    { title: '追加が新しい順', value: 'mylist_added_desc' },
++    { title: '追加が古い順', value: 'mylist_added_asc' },
++    { title: '録画が新しい順', value: 'recorded_desc' },
++    { title: '録画が古い順', value: 'recorded_asc' },
++] : [
++    { title: '新しい順', value: 'desc' },
++    { title: '古い順', value: 'asc' },
++]);
++
++// 現在の並び順の表示名
++const currentSortTitle = computed(() => sortItems.value.find((item) => item.value === sort_order.value)?.title ?? '');
++
++// 並び順ボタンを押すたびに、次の並び順へ切り替える
++const cycleSortOrder = () => {
++    const items = sortItems.value;
++    const index = items.findIndex((item) => item.value === sort_order.value);
++    const next = items[(index + 1) % items.length];
++    if (next === undefined) {
++        return;
++    }
++    sort_order.value = next.value;
++    emit('update:sortOrder', next.value);
++};
++
+ // 内部で管理するプログラムリスト
+ const displayPrograms = ref<IRecordedProgram[]>([...props.programs]);
+ // 内部で管理する合計数
+@@ -272,31 +286,37 @@
+         align-items: center;
+         flex-shrink: 0;
+         margin-left: auto;
+-        :deep(.v-field) {
+-            padding-right: 4px !important;
+-        }
+-        :deep(.v-field__input) {
+-            padding-left: 12px !important;
+-            padding-right: 0px !important;
+-        }
+ 
+-        .v-select {
++        .recorded-program-list__sort-button {
+             width: 103px;
+             margin-left: 12px;
+         }
+         &--mylist {
+-            .v-select {
++            .recorded-program-list__sort-button {
+                 width: 143px;
+             }
+         }
+     }
+ 
+-    &__sort {
+-        :deep(.v-field__input) {
+-            font-size: 14px !important;
+-            padding-top: 6px !important;
+-            padding-bottom: 6px !important;
+-            min-height: unset !important;
++    &__sort-button {
++        display: flex;
++        align-items: center;
++        justify-content: space-between;
++        gap: 6px;
++        padding: 7px 8px 7px 12px;
++        font-size: 14px;
++        font-family: inherit;
++        color: rgb(var(--v-theme-on-surface));
++        background: rgb(var(--v-theme-background-lighten-1));
++        border: none;
++        border-radius: 4px;
++        cursor: pointer;
++        flex-shrink: 0;
++
++        &-text {
++            overflow: hidden;
++            text-overflow: ellipsis;
++            white-space: nowrap;
+         }
+     }
+ 
+--- a/client/src/components/Watch/Header.vue
++++ b/client/src/components/Watch/Header.vue
+@@ -1,6 +1,6 @@
+ <template>
+     <header class="watch-header" :class="{'watch-header--video': playback_mode === 'Video'}">
+-        <router-link class="watch-header__back-icon" v-ripple :to="playback_mode === 'Live' ? '/tv/' : '/videos/'">
++        <router-link class="watch-header__back-icon" v-ripple :to="playback_mode === 'Live' ? '/tv/' : '/videos/programs'">
+             <Icon icon="fluent:chevron-left-12-filled" width="21px" />
+         </router-link>
+         <img class="watch-header__broadcaster" v-if="playback_mode === 'Live'"
+--- a/client/src/components/Watch/Navigation.vue
++++ b/client/src/components/Watch/Navigation.vue
+@@ -13,7 +13,7 @@
+         </router-link>
+         <router-link v-ripple class="watch-navigation__link" active-class="watch-navigation__link--active"
+             :class="{'watch-navigation__link--active': $route.path.startsWith('/videos')}"
+-            v-ftooltip.right="'ビデオをみる'"  to="/videos/">
++            v-ftooltip.right="'ビデオをみる'"  to="/videos/programs">
+             <Icon class="watch-navigation__link-icon" icon="fluent:movies-and-tv-20-regular" width="26px" />
+         </router-link>
+         <router-link v-ripple class="watch-navigation__link" active-class="watch-navigation__link--active"
+--- a/client/src/main.ts
++++ b/client/src/main.ts
+@@ -21,6 +21,7 @@
+     setLocalStorageSettings,
+ } from '@/stores/SettingsStore';
+ import Utils from '@/utils';
++import { installTvSpatialNavigation } from '@/utils/TvSpatialNavigation';
+ 
+ 
+ // スムーズスクロール周りの API の polyfill を適用
+@@ -59,6 +60,9 @@
+ // マウントを実行
+ app.mount('#app');
+ 
++// テレビ向け D-pad 空間ナビゲーションを有効化（方向キーを押したときだけ作動する）
++installTvSpatialNavigation();
++
+ // ***** Service Worker のイベントを登録 *****
+ 
+ const { updateServiceWorker } = useRegisterSW({
+--- a/client/src/utils/TvSpatialNavigation.ts
++++ b/client/src/utils/TvSpatialNavigation.ts
+@@ -0,0 +1,951 @@
++// TvSpatialNavigation.ts
++// テレビ向け D-pad 空間ナビゲーション
++//
++// リモコンの方向キーで画面上の対話要素へフォーカスリングを移動し、
++// Enter でクリックする。マウスカーソル方式のテレビブラウザの代替。
++//
++// 方針:
++// - フォーカスは仮想フォーカス (クラス付与) で管理し、Enter で click() を発火する
++//   → Vue 側のフォーカス管理と喧嘩しない
++// - 通常は動画プレイヤー表示中に無効化し、プレイヤーのキー操作 (シーク等) を優先する
++// - ただしプレイヤー表示中に下キーか決定を押すと、再生を止めずに「操作モード」に入り、
++//   プレイヤーのボタン類 (再生・全画面・設定など) にもリングで移動して決定できる
++//   初期フォーカスは再生ボタン。操作モード中に上キーを押すとメニューを素早く閉じられる
++//   (設定パネルが開いている間は上キーはパネル内の項目移動に使う)
++//   → 決定すると操作モードを抜け、キー操作はプレイヤーに戻る
++//   ただし設定パネルが開いている間は操作モードを継続し、パネル内の項目も選べる
++// - フォーム入力中 (input/textarea/select/contenteditable) は素通しする
++// - マウス操作が来たらリングを消す (通常の PC 利用では何も起きない)
++// - フォーカス中の要素が仮想スクロール等で剥がれた場合は、最後の位置から再開する
++// - モーダル (ダイアログ・番組詳細ドロワー) が開いている間は、その中だけで移動する
++// - 番組表のセルも候補に含める。セルはフォーカスが移った時点で選択 (展開)
++//   状態になり、決定でセル内のアクションボタン (番組詳細・視聴・録画予約) へ入る
++
++type Direction = 'up' | 'down' | 'left' | 'right';
++
++interface RectLike {
++    left: number;
++    top: number;
++    right: number;
++    bottom: number;
++    width: number;
++    height: number;
++}
++
++const CANDIDATE_SELECTOR = [
++    'a[href]',
++    'button:not([disabled])',
++    'input:not([disabled]):not([type="hidden"])',
++    'select:not([disabled])',
++    'textarea:not([disabled])',
++    '[tabindex]:not([tabindex="-1"])',
++    '[role="button"]',
++    '[role="link"]',
++    '[role="tab"]',
++    '[role="menuitem"]',
++    '[role="option"]',
++    // KonomiTV 固有のクリック要素 (チャンネルのピン留めボタンや検索ボタン等、div で実装されているもの)
++    '.channel__broadcaster-pin',
++    '.search-button',
++    '.timetable-program-cell',
++].join(', ');
++
++// モーダル内でのみ候補に加える要素 (番組詳細ドロワーのタブや閉じるボタンなど、
++// div で実装されたクリック要素)
++const MODAL_EXTRA_SELECTOR = '.reservation-detail-drawer__tab, .reservation-detail-drawer__close';
++
++// 操作モード専用の候補セレクタ:
++// プレイヤーのアイコン類には div で実装されたもの (最初から再生・キャプチャ等) や
++// 設定パネルの項目 (div) があり、通常の候補セレクタでは拾えない。
++// 設定のサブパネル (画質・速度・音声) の項目と、戻る用のヘッダーも対象に含める
++const CONTROL_CANDIDATE_SELECTOR = `${CANDIDATE_SELECTOR},.dplayer-icon,.dplayer-setting-item,.dplayer-setting-quality-item,.dplayer-setting-speed-item,.dplayer-setting-audio-item,.dplayer-setting-header,.dplayer-mobile-icon`;
++
++const FOCUS_CLASS = 'tv-spatial-nav-focus';
++const ACTIVE_CLASS = 'tv-spatial-nav-active';
++const CONTROL_CLASS = 'tv-spatial-nav-control';
++const TV_FULLSCREEN_CLASS = 'tv-spatial-nav-fullscreen';
++
++// テレビ向けラッパーアプリ (UA に KonomiTV-TV を含む) でのみ有効な判定
++// 通常のブラウザでは全画面ボタンの本来の動作 (本物のフルスクリーン) を妨げない
++const isTvWrapper = typeof navigator !== 'undefined' && navigator.userAgent.includes('KonomiTV-TV');
++
++let current: HTMLElement | null = null;
++let lastRect: RectLike | null = null;
++// サイドバーへ移る直前に本体側でフォーカスしていた要素
++// (サイドバーから右キーで本体へ戻るときの復帰先)
++let lastContent: HTMLElement | null = null;
++let active = false;
++let controlMode = false;
++let tvFullscreen = false;
++let initialized = false;
++let lastHref = '';
++let focusGuardTimer: number | null = null;
++
++// Vue の再描画などでフォーカスクラスが剥がれた場合に付け直すガード
++function ensureFocusGuard(): void {
++    if (focusGuardTimer !== null) {
++        return;
++    }
++    focusGuardTimer = window.setInterval(() => {
++        if (current !== null && document.contains(current) && !current.classList.contains(FOCUS_CLASS)) {
++            current.classList.add(FOCUS_CLASS);
++        }
++    }, 500);
++}
++
++const STYLE_TEXT = `
++.${ACTIVE_CLASS} .${FOCUS_CLASS} {
++    /* 市販レコーダーの選択行のように、背景をふわりと明るくして示す
++       (以前のピンクの太枠はどきついとの指摘で変更)。
++       明るさは background-color ではなく inset シャドウの全面レイヤーで付ける:
++       background-color を上書きすると、番組表の展開セルなど「下の要素を
++       覆い隠す」前提の要素が半透明になり、文字が重なって見えるため */
++    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.85), inset 0 0 0 999px rgba(255, 255, 255, 0.13), inset 0 0 22px rgba(255, 255, 255, 0.22) !important;
++    filter: brightness(1.28) !important;
++}
++body.${CONTROL_CLASS} .dplayer-controller {
++    opacity: 1 !important;
++    visibility: visible !important;
++    transform: none !important;
++    /* 明るい映像の上では白いアイコンが見えなくなるため、バーに暗い背景を付ける */
++    background: linear-gradient(to top, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0.42)) !important;
++}
++body.${CONTROL_CLASS} .watch-player__dplayer.dplayer.dplayer-hide-controller .dplayer-controller {
++    opacity: 1 !important;
++    visibility: visible !important;
++    transform: none !important;
++    background: linear-gradient(to top, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0.42)) !important;
++}
++body.${CONTROL_CLASS} .dplayer-controller * {
++    visibility: visible !important;
++}
++body.${CONTROL_CLASS} .dplayer-mobile-icon-wrap {
++    opacity: 1 !important;
++    visibility: visible !important;
++}
++body.${CONTROL_CLASS} .dplayer-mobile-icon-wrap * {
++    visibility: visible !important;
++}
++html.${TV_FULLSCREEN_CLASS},
++html.${TV_FULLSCREEN_CLASS} body {
++    overflow: hidden !important;
++    overscroll-behavior: none;
++}
++html.${TV_FULLSCREEN_CLASS} .watch-container {
++    position: fixed !important;
++    top: 0;
++    left: 0;
++    z-index: 1000;
++    box-sizing: border-box;
++    width: 100% !important;
++    height: 100% !important;
++    min-width: 0 !important;
++    min-height: 0 !important;
++    background: #000;
++}
++html.${TV_FULLSCREEN_CLASS} .watch-container .watch-navigation,
++html.${TV_FULLSCREEN_CLASS} .watch-container .watch-panel {
++    display: none !important;
++}
++html.${TV_FULLSCREEN_CLASS} .watch-content,
++html.${TV_FULLSCREEN_CLASS} .watch-player,
++html.${TV_FULLSCREEN_CLASS} .watch-player__dplayer {
++    width: 100% !important;
++    height: 100% !important;
++    min-height: 0 !important;
++    aspect-ratio: auto !important;
++}
++html.${TV_FULLSCREEN_CLASS} .watch-content {
++    flex: 1;
++}
++`;
++
++function snapshotRect(rect: DOMRect): RectLike {
++    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
++}
++
++function isVisible(el: HTMLElement): boolean {
++    const rect = el.getBoundingClientRect();
++    if (rect.width === 0 || rect.height === 0) {
++        return false;
++    }
++    const style = window.getComputedStyle(el);
++    if (style.display === 'none' || style.visibility === 'hidden') {
++        return false;
++    }
++    // 非アクティブな Swiper スライド内の要素は除外する。
++    // スライドは横方向に画面外へずれているため、横方向の交差だけで判定する
++    // (縦方向にはみ出た要素は、フォーカス時のスクロールで到達できるので除外しない。
++    //  以前は縦も含めて除外していたため、画面下端のすぐ先にある項目へ移動できず、
++    //  無関係なナビゲーション項目へフォーカスが逃げていた)
++    const slide = el.closest('.swiper-slide');
++    if (slide !== null) {
++        const slideRect = slide.getBoundingClientRect();
++        if (slideRect.right <= 0 || slideRect.left >= window.innerWidth) {
++            return false;
++        }
++    }
++    return true;
++}
++
++function getCandidates(): HTMLElement[] {
++    // ロゴ (トップへのリンク) は選択対象にしない (誤って選ぶと一覧から離れてしまうため)
++    return Array.from(document.querySelectorAll<HTMLElement>(CANDIDATE_SELECTOR))
++        .filter((el) => !el.classList.contains('konomitv-logo'))
++        // 番組表の上部コントロールのセレクト入力 (チャンネル種別・時刻) は
++        // リモコンでは扱えないうえ、グリッドを上へ移動する途中で「近い」と
++        // 判定されてフォーカスを奪う罠になるため、候補にしない
++        // (日付の前後ボタンや現在時刻ボタンは従来通り選べる)
++        .filter((el) => !((el.tagName === 'INPUT' || el.tagName === 'SELECT')
++            && el.closest('.timetable-controls, .timetable-controls-mobile') !== null))
++        .filter(isVisible);
++}
++
++function centerOf(rect: RectLike): { x: number; y: number } {
++    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
++}
++
++function scoreFor(fromRect: RectLike, rect: RectLike, dir: Direction): number | null {
++    const fromCenter = centerOf(fromRect);
++    const c = centerOf(rect);
++    const dx = c.x - fromCenter.x;
++    const dy = c.y - fromCenter.y;
++    let primary: number;
++    let secondary: number;
++    switch (dir) {
++        case 'right':
++            if (dx <= 1) return null;
++            primary = dx;
++            secondary = Math.abs(dy);
++            break;
++        case 'left':
++            if (dx >= -1) return null;
++            primary = -dx;
++            secondary = Math.abs(dy);
++            break;
++        case 'down':
++            if (dy <= 1) return null;
++            primary = dy;
++            secondary = Math.abs(dx);
++            break;
++        case 'up':
++            if (dy >= -1) return null;
++            primary = -dy;
++            secondary = Math.abs(dx);
++            break;
++    }
++    // 移動方向と直交する軸で現在の要素と範囲が重なる候補 (同じ行・同じ列にある要素) は、
++    // 主方向の距離で素直に近いものを選ぶ。
++    // ずれを二乗ペナルティにすると、狭い要素 (チップ等) から広い要素 (カード) へ
++    // 移動するときに、手前の要素より奥の要素の方がスコアが良くなってしまうため
++    const overlaps = (dir === 'left' || dir === 'right')
++        ? (rect.top < fromRect.bottom && rect.bottom > fromRect.top)
++        : (rect.left < fromRect.right && rect.right > fromRect.left);
++    if (overlaps) {
++        return primary + secondary * 0.1;
++    }
++    // 主方向の距離 + 直交方向のずれ (ずれは二乗ペナルティで強めに効かせる)
++    return primary + (secondary * secondary) / Math.max(primary, 1) + secondary * 2;
++}
++
++// sticky / fixed な要素の中にあるかどうか
++// (タブバーのように画面上部へ張り付くバーは、常に現在位置の近くに
++//  見えるため、縦移動の候補として本来の項目より優先されてしまう)
++function isInStickyChrome(el: HTMLElement): boolean {
++    let node: HTMLElement | null = el;
++    while (node !== null && node !== document.body) {
++        const pos = window.getComputedStyle(node).position;
++        if (pos === 'sticky' || pos === 'fixed') {
++            return true;
++        }
++        node = node.parentElement;
++    }
++    return false;
++}
++
++function findNext(fromRect: RectLike, dir: Direction, exclude: HTMLElement | null, pool?: HTMLElement[]): HTMLElement | null {
++    const candidates = pool ?? getCandidates();
++    // 縦移動では、他の候補の中に含まれる要素 (カード右上のピン留めボタン等) を候補から外す。
++    // 次のカードの上端にあるボタンはカード本体より縦の距離が近いため、
++    // スクロールのたびにボタンへ寄り道してしまう (横移動では従来通り到達できる)
++    const excludeContained = pool === undefined && (dir === 'up' || dir === 'down');
++    // 縦移動では、sticky / fixed なバー内の要素は「他に候補が無いときだけ」選ぶ。
++    // タブバーは画面上部に張り付いて常に見えているため、そのままだと
++    // 一覧を上へ送る途中で何度もバーへ寄り道してしまう
++    const deferChrome = pool === undefined && (dir === 'up' || dir === 'down');
++    // 横移動では、現在の要素と縦の範囲が重なる候補を優先する。
++    // 先頭のカードから左を押したとき、同じ高さにあるサイドバーではなく
++    // すぐ上にあるタブバーが「近い」と判定されて飛んでしまうため
++    const preferRowOverlap = pool === undefined && (dir === 'left' || dir === 'right');
++    // 番組表のセルから縦移動するときは、同じ列のセルを優先する。
++    // グリッドの上端付近では、上のセルの中心が画面の外に出てしまい、
++    // コントロールバー等の無関係な要素の方が「近い」と判定されるため
++    const preferSameColumn = pool === undefined && exclude !== null
++        && exclude.classList.contains('timetable-program-cell') && (dir === 'up' || dir === 'down');
++    // 番組表の中での左右移動は、表の中の要素だけを優先する。
++    // 表は横に長く、画面外 (左) の列は中心同士の距離でサイドバーより
++    // 遠く見えるため、そのままだと最初の列に着く前にサイドバーへ
++    // 飛んでしまう (右端のチャンネルから左へ戻るときに発生する)
++    const inGrid = (el: HTMLElement | null): boolean =>
++        el !== null && el.closest('.timetable-grid') !== null;
++    const preferGrid = pool === undefined && inGrid(exclude) && (dir === 'left' || dir === 'right');
++    // 表の右端からさらに右へは、表の外へ飛ばない (右上隅のボタン等が
++    // 「右にあるもの」として選ばれ、上へ飛んでしまうため)。
++    // 左端から左はサイドバーへ出る必要があるので、右方向だけ止める
++    const gridRightEdgeStop = pool === undefined && inGrid(exclude) && dir === 'right';
++    const chromeCache = new Map<HTMLElement, boolean>();
++    const isChrome = (el: HTMLElement): boolean => {
++        let v = chromeCache.get(el);
++        if (v === undefined) {
++            v = isInStickyChrome(el);
++            chromeCache.set(el, v);
++        }
++        return v;
++    };
++    for (const pass of [0, 1]) {
++        let best: HTMLElement | null = null;
++        let bestScore = Infinity;
++        for (const el of candidates) {
++            if (el === exclude) {
++                continue;
++            }
++            // 番組表のセルから方向キーで動くときは、セル内のアクションボタンを
++            // 候補から外す (短い番組ではボタンがセルの下にはみ出して並ぶため、
++            // そのままでは左右への移動でもボタンに吸われてしまう)。
++            // ボタンへは決定キーで入る
++            if (pool === undefined && exclude !== null
++                && exclude.classList.contains('timetable-program-cell') && exclude.contains(el)) {
++                continue;
++            }
++            // ただし、現在の要素と同じコンテナに含まれる要素同士 (番組表の展開セル内の
++            // アクションボタンの並び等) は外さない: 同じセルの中は縦にも移動できる
++            if (excludeContained && candidates.some((other) => other !== el && other.contains(el)
++                && !(exclude !== null && other.contains(exclude)))) {
++                continue;
++            }
++            if (deferChrome && pass === 0 && isChrome(el)) {
++                continue;
++            }
++            const rect = geometryRect(el);
++            if (preferRowOverlap && pass === 0 && (rect.bottom <= fromRect.top || rect.top >= fromRect.bottom)) {
++                continue;
++            }
++            if (preferSameColumn && pass === 0 && Math.abs(rect.left - fromRect.left) > 2) {
++                continue;
++            }
++            if (preferGrid && pass === 0 && !inGrid(el)) {
++                continue;
++            }
++            // 縦移動では、現在の要素と横方向の範囲が重なる候補だけを対象にする
++            // (右側の一覧を最後までスクロールしたときに、画面下部にある
++            //  左サイドバーの項目へフォーカスが飛ばないように。
++            //  サイドバーへは左キーで移る。操作モードなど専用プールには適用しない)
++            if (pool === undefined && (dir === 'up' || dir === 'down') && (rect.left >= fromRect.right || rect.right <= fromRect.left)) {
++                continue;
++            }
++            const score = scoreFor(fromRect, rect, dir);
++            if (score !== null && score < bestScore) {
++                bestScore = score;
++                best = el;
++            }
++        }
++        if (best !== null || pass === 1
++            || (!deferChrome && !preferRowOverlap && !preferSameColumn && !preferGrid)) {
++            // 表の右端では、表の外の要素が勝っても採用しない
++            if (best !== null && gridRightEdgeStop && !inGrid(best)) {
++                return null;
++            }
++            return best;
++        }
++    }
++    return null;
++}
++
++// sticky / fixed のバー (チャンネルのタブバーなど) にフォーカス要素の端が
++// 隠れている場合、その分だけ追加でスクロールして全体が見えるようにする。
++// scrollIntoView は sticky なバーを考慮しないため、上方向の移動で先頭の
++// 項目がバーの下に半分隠れてしまうことがある
++function adjustScrollForOcclusion(el: HTMLElement): void {
++    for (let i = 0; i < 3; i++) {
++        const rect = el.getBoundingClientRect();
++        const cx = Math.min(Math.max(rect.left + rect.width / 2, 4), window.innerWidth - 4);
++        let dy = 0;
++        const topCover = document.elementFromPoint(cx, Math.min(Math.max(rect.top + 4, 4), window.innerHeight - 4));
++        if (topCover !== null && topCover !== el && !el.contains(topCover)) {
++            const coverRect = topCover.getBoundingClientRect();
++            if (coverRect.top <= rect.top + 4 && coverRect.bottom > rect.top) {
++                dy = rect.top - coverRect.bottom - 2;
++            }
++        }
++        if (dy === 0) {
++            const bottomCover = document.elementFromPoint(cx, Math.min(Math.max(rect.bottom - 4, 4), window.innerHeight - 4));
++            if (bottomCover !== null && bottomCover !== el && !el.contains(bottomCover)) {
++                const coverRect = bottomCover.getBoundingClientRect();
++                if (coverRect.bottom >= rect.bottom - 4 && coverRect.top < rect.bottom) {
++                    dy = rect.bottom - coverRect.top + 2;
++                }
++            }
++        }
++        if (dy === 0) {
++            return;
++        }
++        window.scrollBy(0, dy);
++    }
++}
++
++// 方向キーの判定に使う要素の矩形。番組表のセルは、そのままの矩形では
++// 中心の位置が本来の時間枠からずれてしまう:
++// - 選択されると下方向へ大きく展開し、中心が下へずれる
++// - 短い番組は最小の高さ (20px) で描かれるため、1分番組でも中心が
++//   時間枠より下に来て、下の番組より「下にある」ように見える
++// そのまま判定すると「上を押したのに下の番組が選ばれる」「短い番組
++// 同士で行ったり来たりして先へ進めない」といったことが起きるため、
++// セルについては同じ列の次のセルの上端までを本来の時間枠として扱う
++// (上端は常に時間枠通りで、展開しても動かない)
++function geometryRect(el: HTMLElement): RectLike {
++    const rect = el.getBoundingClientRect();
++    if (!el.classList.contains('timetable-program-cell')) {
++        return snapshotRect(rect);
++    }
++    const parent = el.parentElement;
++    if (parent === null) {
++        return snapshotRect(rect);
++    }
++    let bottom: number | null = null;
++    for (const sib of Array.from(parent.children)) {
++        if (sib === el || !(sib instanceof HTMLElement)
++            || !sib.classList.contains('timetable-program-cell')) {
++            continue;
++        }
++        const sibTop = sib.getBoundingClientRect().top;
++        if (sibTop > rect.top + 1 && (bottom === null || sibTop < bottom)) {
++            bottom = sibTop;
++        }
++    }
++    if (bottom === null || bottom <= rect.top) {
++        return snapshotRect(rect);
++    }
++    return { left: rect.left, top: rect.top, right: rect.right, bottom, width: rect.width, height: bottom - rect.top };
++}
++
++function setFocus(el: HTMLElement | null): void {
++    // 番組表のセルは、フォーカスが移った時点で選択 (展開) 状態にする。
++    // マウスではクリックで選択が付いて回るが、リモコンではフォーカス
++    // そのものが選択になる方が自然 (移動した先に選択が残り続けない)。
++    // 選択済みのセルはクリックすると選択解除 (トグル) になるため触らない
++    if (el !== null && el.classList.contains('timetable-program-cell')
++        && !el.classList.contains('timetable-program-cell--selected')) {
++        el.click();
++    }
++    if (current !== null) {
++        current.classList.remove(FOCUS_CLASS);
++    }
++    current = el;
++    if (current !== null) {
++        ensureFocusGuard();
++        lastRect = geometryRect(current);
++        current.classList.add(FOCUS_CLASS);
++        current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
++        adjustScrollForOcclusion(current);
++        // スクロールで位置が変わるため、少し待ってから矩形を取り直す
++        requestAnimationFrame(() => {
++            if (current !== null && document.contains(current)) {
++                lastRect = geometryRect(current);
++            }
++        });
++    }
++}
++
++function pickInitialFocus(): HTMLElement | null {
++    const candidates = getCandidates();
++    if (candidates.length === 0) {
++        return null;
++    }
++    // メインコンテンツ側 (左端のナビゲーションより右) のうち、
++    // 画面の読み始め位置 (左上寄りのアンカー) に最も近い要素を選ぶ
++    // ただし上部のタブ・ヘッダー帯 (画面最上部に張り付いた要素) は初期フォーカスの対象から外す
++    const mainArea = candidates.filter((el) => el.getBoundingClientRect().left >= window.innerWidth * 0.15);
++    // 本体側に候補が無いページ (キャプチャ一覧など) では、アンカーに近い
++    // サイドバー項目 (番組表など) ではなく、現在のページの項目を選ぶ
++    if (mainArea.length === 0) {
++        const activeLink = document.querySelector<HTMLElement>('.navigation__link--active');
++        if (activeLink !== null && candidates.includes(activeLink)) {
++            return activeLink;
++        }
++    }
++    let pool = mainArea.length > 0 ? mainArea : candidates;
++    const belowChrome = pool.filter((el) => el.getBoundingClientRect().top >= 50);
++    if (belowChrome.length > 0) {
++        pool = belowChrome;
++    }
++    const anchor = { x: window.innerWidth * 0.35, y: window.innerHeight * 0.28 };
++    let best: HTMLElement | null = null;
++    let bestScore = Infinity;
++    for (const el of pool) {
++        const c = centerOf(el.getBoundingClientRect());
++        const score = Math.hypot(c.x - anchor.x, c.y - anchor.y);
++        if (score < bestScore) {
++            bestScore = score;
++            best = el;
++        }
++    }
++    return best;
++}
++
++function isPlayerVisible(): boolean {
++    // KonomiTV のプレイヤー (video 要素) が実サイズで表示されている間は
++    // 原則として方向キーをプレイヤー側 (シーク・音量) に譲る
++    const video = document.querySelector('video');
++    if (video === null) {
++        return false;
++    }
++    const rect = video.getBoundingClientRect();
++    return rect.width > 200 && rect.height > 100;
++}
++
++function hasOpenDialog(): boolean {
++    return document.querySelector('.v-overlay--active, .v-dialog--active') !== null;
++}
++
++// 開いているモーダル (ダイアログ or 番組詳細ドロワー) の中身の要素を返す。
++// メニュー (v-menu) は対象外: メニューには独自のキーボード操作があるため素通しする
++function getActiveModal(): HTMLElement | null {
++    // 手前にあるものから優先する: ダイアログ (ドロワーの上に開く確認等) → ドロワー
++    const overlays = document.querySelectorAll('.v-overlay--active');
++    for (let i = overlays.length - 1; i >= 0; i--) {
++        const overlay = overlays[i] as HTMLElement;
++        if (overlay.classList.contains('v-menu')) {
++            continue;
++        }
++        const content = overlay.querySelector<HTMLElement>('.v-overlay__content');
++        if (content !== null) {
++            return content;
++        }
++    }
++    const drawer = document.querySelector<HTMLElement>('.reservation-detail-drawer--visible');
++    if (drawer !== null) {
++        return drawer;
++    }
++    return null;
++}
++
++// モーダル内の候補一覧 (通常の候補 + モーダル専用の div クリック要素)
++function getModalCandidates(modal: HTMLElement): HTMLElement[] {
++    const pool = getCandidates().filter((el) => modal.contains(el));
++    for (const el of Array.from(modal.querySelectorAll<HTMLElement>(MODAL_EXTRA_SELECTOR))) {
++        if (isVisible(el) && !pool.includes(el)) {
++            pool.push(el);
++        }
++    }
++    return pool;
++}
++
++// 読み順 (上→下、左→右) で先頭の要素
++function firstInReadingOrder(elements: HTMLElement[]): HTMLElement | null {
++    const sorted = [...elements].sort((a, b) => {
++        const ra = a.getBoundingClientRect();
++        const rb = b.getBoundingClientRect();
++        return (ra.top - rb.top) || (ra.left - rb.left);
++    });
++    return sorted[0] ?? null;
++}
++
++function getControlCandidates(): HTMLElement[] {
++    // 操作モード中の候補はプレイヤーのコントロールバー内の操作要素に限る
++    // (設定パネルが開いている間はその項目も候補に含める)
++    // コントロールバーが隠れている間は子要素が visibility:hidden になるため、
++    // 可視性ではなく矩形と display だけで判定する。表示自体は CONTROL_CLASS の
++    // スタイル上書きで強制する
++    const player = document.querySelector('.dplayer');
++    if (player === null) {
++        return [];
++    }
++    const scopes: Element[] = [];
++    const controller = player.querySelector('.dplayer-controller');
++    if (controller !== null) {
++        scopes.push(controller);
++    }
++    // モバイルレイアウト (テレビ等) ではコントロールバーに再生ボタンが無く、
++    // 代わりに画面中央のモバイル用アイコン (再生/巻き戻し/早送り) が使われる
++    const mobileIcons = player.querySelector('.dplayer-mobile-icon-wrap');
++    if (mobileIcons !== null) {
++        scopes.push(mobileIcons);
++    }
++    const settingBox = player.querySelector('.dplayer-setting-box.dplayer-setting-box-open');
++    if (settingBox !== null) {
++        // 設定パネルは origin / 画質 / 速度 / 音声 のパネルが横スライドで切り替わる構造で、
++        // 表示されていないパネルも矩形が残って候補に混ざってしまう。
++        // 現在表示中のパネルだけを候補にする
++        const subPanel = settingBox.classList.contains('dplayer-setting-box-quality')
++            ? settingBox.querySelector('.dplayer-setting-quality-panel')
++            : settingBox.classList.contains('dplayer-setting-box-speed')
++                ? settingBox.querySelector('.dplayer-setting-speed-panel')
++                : settingBox.classList.contains('dplayer-setting-box-audio')
++                    ? settingBox.querySelector('.dplayer-setting-audio-panel')
++                    : settingBox.querySelector('.dplayer-setting-origin-panel');
++        scopes.push(subPanel ?? settingBox);
++    }
++    if (scopes.length === 0) {
++        scopes.push(player);
++    }
++    const candidates: HTMLElement[] = [];
++    for (const scope of scopes) {
++        for (const el of scope.querySelectorAll<HTMLElement>(CONTROL_CANDIDATE_SELECTOR)) {
++            const rect = el.getBoundingClientRect();
++            if (rect.width === 0 || rect.height === 0) {
++                continue;
++            }
++            if (window.getComputedStyle(el).display === 'none') {
++                continue;
++            }
++            if (!candidates.includes(el)) {
++                candidates.push(el);
++            }
++        }
++    }
++    // 親子ともに候補にマッチした場合は内側だけを残す
++    // (click() は内側からでも親のハンドラへバブリングするため、内側で問題ない)
++    return candidates.filter((el) => !candidates.some((other) => other !== el && el.contains(other)));
++}
++
++function isFullscreenButton(el: HTMLElement): boolean {
++    const attrs = `${el.className} ${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('title') ?? ''} ${el.getAttribute('data-balloon') ?? ''}`;
++    return attrs.includes('dplayer-full') || attrs.includes('全画面');
++}
++
++function findFullscreenButton(candidates: HTMLElement[]): HTMLElement | null {
++    for (const el of candidates) {
++        if (isFullscreenButton(el)) {
++            return el;
++        }
++    }
++    return null;
++}
++
++function findPlayButton(candidates: HTMLElement[]): HTMLElement | null {
++    for (const el of candidates) {
++        const cls = `${el.className}`;
++        if (cls.includes('dplayer-play-icon') || cls.includes('dplayer-mobile-icon-play')) {
++            return el;
++        }
++    }
++    return null;
++}
++
++function isSettingButton(el: HTMLElement): boolean {
++    return `${el.className}`.includes('dplayer-setting-icon');
++}
++
++function isSettingPanelOpen(): boolean {
++    return document.querySelector('.dplayer-setting-box.dplayer-setting-box-open') !== null;
++}
++
++function closeSettingPanel(): void {
++    // 設定パネルは歯車ボタンでは閉じられない (開く専用のハンドラしかない) ため、
++    // マスク (映像領域) のクリックで閉じる。マスク自身のハンドラが hide() を呼ぶ
++    const mask = document.querySelector<HTMLElement>('.dplayer .dplayer-mask');
++    if (mask !== null) {
++        mask.dispatchEvent(new MouseEvent('click', { bubbles: false, cancelable: true, view: window }));
++    }
++}
++
++function clickInControlMode(target: HTMLElement): void {
++    // 操作モード中のクリックはバブリングさせない。
++    // タッチデバイスと判定される環境 (テレビの WebView 等) では、プレイヤー領域への
++    // click が Watch.vue 側のハンドラに伝わると、コントロール UI の表示トグルとして
++    // 処理され、開いたばかりの設定パネルごと閉じられてしまう (歯車を押しても開かない)。
++    // 対象要素自身のハンドラだけを実行すれば、パネルは開いたままになる
++    target.dispatchEvent(new MouseEvent('click', { bubbles: false, cancelable: true, view: window }));
++}
++
++function setTvFullscreen(on: boolean): void {
++    // テレビ向けラッパーでは本物のフルスクリーン (body が対象) に入っても
++    // すでに画面いっぱいに表示されているため見た目が変わらない。
++    // そのため全画面ボタンは、パネルを隠して映像だけを画面いっぱいに広げる
++    // 独自の全画面表示 (疑似フルスクリーン相当) の切り替えとして扱う
++    tvFullscreen = on;
++    document.documentElement.classList.toggle(TV_FULLSCREEN_CLASS, on);
++}
++
++function enterControlMode(): void {
++    controlMode = true;
++    active = true;
++    document.body.classList.add(ACTIVE_CLASS);
++    // コントロールバーを強制表示する (自動非表示の仕組みはイベント駆動で、
++    // タッチデバイス判定により mousemove が無視される環境があるため、
++    // イベントではなくスタイルの上書きで確実に表示させる)
++    document.body.classList.add(CONTROL_CLASS);
++    const pool = getControlCandidates();
++    // 初期フォーカスは再生ボタン: 決定をもう一度押せば一時停止/再生できる
++    const target = findPlayButton(pool) ?? findFullscreenButton(pool) ?? pool[0] ?? pickInitialFocus();
++    setFocus(target);
++}
++
++function exitControlMode(): void {
++    controlMode = false;
++    document.body.classList.remove(CONTROL_CLASS);
++    setFocus(null);
++}
++
++function isFormField(el: EventTarget | null): boolean {
++    if (!(el instanceof HTMLElement)) {
++        return false;
++    }
++    const tag = el.tagName;
++    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
++}
++
++function onKeyDown(event: KeyboardEvent): void {
++    const dirMap: Record<string, Direction> = {
++        ArrowUp: 'up',
++        ArrowDown: 'down',
++        ArrowLeft: 'left',
++        ArrowRight: 'right',
++    };
++    const dir = dirMap[event.key];
++    if (event.key === 'Escape') {
++        // テレビ向け全画面中は Escape で全画面を抜ける
++        // 操作モード中は Escape で抜ける (伝播は止めない: プレイヤー側の
++        // 疑似フルスクリーン終了など、他の Escape ハンドラも同時に働いてよい)
++        // ただし設定パネルが開いている間は、まずパネルを閉じるところまで
++        if (tvFullscreen) {
++            setTvFullscreen(false);
++        }
++        if (controlMode) {
++            if (isSettingPanelOpen()) {
++                closeSettingPanel();
++                const gear = getControlCandidates().find((el) => isSettingButton(el));
++                if (gear !== undefined) {
++                    setFocus(gear);
++                }
++            } else {
++                exitControlMode();
++            }
++        }
++        return;
++    }
++    if (dir === undefined && event.key !== 'Enter') {
++        return;
++    }
++    if (isFormField(document.activeElement) || isFormField(event.target)) {
++        return;
++    }
++    // ルート遷移していたら状態をリセットする
++    if (location.href !== lastHref) {
++        lastHref = location.href;
++        if (tvFullscreen) {
++            setTvFullscreen(false);
++        }
++        if (controlMode) {
++            exitControlMode();
++        }
++        if (current !== null) {
++            current.classList.remove(FOCUS_CLASS);
++            current = null;
++        }
++        lastRect = null;
++        lastContent = null;
++    }
++
++    // 操作モード中にダイアログが開いたら (設定項目から開くもの等)、
++    // 操作モードを抜けてキーをダイアログ側に渡す
++    if (controlMode && hasOpenDialog()) {
++        exitControlMode();
++        return;
++    }
++
++    // モーダル (ダイアログ・番組詳細ドロワー) が開いている間は、その中だけで
++    // 移動する。中に候補が無いモーダルやメニューはキーを素通しし、
++    // 裏側のフォーカスは動かさない (決定で裏の項目が押されるのを防ぐ)
++    const modal = getActiveModal();
++    if (modal !== null || hasOpenDialog()) {
++        if (modal === null) {
++            return;
++        }
++        const pool = getModalCandidates(modal);
++        if (pool.length === 0) {
++            return;
++        }
++        event.preventDefault();
++        event.stopPropagation();
++        if (current === null || !modal.contains(current)) {
++            const first = firstInReadingOrder(pool);
++            if (first !== null) {
++                setFocus(first);
++            }
++            return;
++        }
++        if (dir !== undefined) {
++            const next = findNext(snapshotRect(current.getBoundingClientRect()), dir, current, pool);
++            if (next !== null) {
++                setFocus(next);
++            }
++        } else if (event.key === 'Enter') {
++            current.click();
++        }
++        return;
++    }
++
++    const playerVisible = isPlayerVisible() && !hasOpenDialog();
++
++    // プレイヤー表示中 (操作モード外) : 下キーか決定で、再生を止めずに
++    // 操作メニュー (コントロールバー) を出す。それ以外のキーは素通しする
++    // (シーク等のプレイヤー操作を優先)。
++    // 以前は決定=再生/一時停止トグルだったが、メニューを出すたびに
++    // 再生が止まるのが煩わしいとの指摘で変更した (一時停止はリモコンの
++    // 再生/一時停止キーか、メニュー内の再生ボタンで行う)
++    if (playerVisible && !controlMode) {
++        if (event.key === 'Enter' || dir === 'down') {
++            event.preventDefault();
++            event.stopPropagation();
++            enterControlMode();
++        }
++        return;
++    }
++
++    if (dir !== undefined) {
++        if (!active) {
++            active = true;
++            document.body.classList.add(ACTIVE_CLASS);
++            setFocus(pickInitialFocus());
++            if (current !== null) {
++                event.preventDefault();
++                event.stopPropagation();
++            }
++            return;
++        }
++        event.preventDefault();
++        event.stopPropagation();
++        // 操作モード中に上キー: 設定パネルが開いていないときは、フォーカス移動
++        // ではなくメニューを素早く閉じる (再生はそのまま続く)。
++        // パネル内では従来通り項目移動に使う
++        if (controlMode && dir === 'up' && !isSettingPanelOpen()) {
++            exitControlMode();
++            return;
++        }
++        // フォーカス中の要素が剥がれていたら、最後の矩形から移動を再開する
++        const fromRect = current !== null && document.contains(current)
++            ? geometryRect(current)
++            : lastRect;
++        if (fromRect === null) {
++            setFocus(controlMode ? (getControlCandidates()[0] ?? null) : pickInitialFocus());
++            return;
++        }
++        let next: HTMLElement | null = null;
++        // サイドバーから右キーで本体へ戻るときは、タブバーではなく、
++        // サイドバーへ移る直前にいた要素 (なければ先頭の項目) へ戻る
++        if (dir === 'right' && !controlMode && current !== null && document.contains(current)
++            && current.classList.contains('navigation__link')) {
++            next = lastContent !== null && document.contains(lastContent) && isVisible(lastContent)
++                ? lastContent
++                : pickInitialFocus();
++            if (next === current) {
++                next = null;
++            }
++        }
++        // サイドバーが画面の左端なので、サイドバー上の左キーは移動しない。
++        // (番組表では、横スクロール中のセルが左側の候補として紛れ込み、
++        //  サイドバーと表を行き来してしまうことがあった)
++        const stayOnSidebarLeft = dir === 'left' && current !== null
++            && current.classList.contains('navigation__link');
++        if (next === null && !stayOnSidebarLeft) {
++            next = findNext(
++                fromRect, dir,
++                current !== null && document.contains(current) ? current : null,
++                controlMode ? getControlCandidates() : undefined,
++            );
++            // サイドバーへ移るときは、真横にある項目ではなく、
++            // 現在のページの項目 (アクティブなリンク) から始める
++            if (next !== null && !controlMode && next.classList.contains('navigation__link')
++                && (current === null || !current.classList.contains('navigation__link'))) {
++                // 復帰先として、移る直前にいた本体側の要素を覚えておく
++                if (current !== null && document.contains(current)) {
++                    lastContent = current;
++                }
++                const activeLink = document.querySelector<HTMLElement>('.navigation__link--active');
++                if (activeLink !== null && activeLink !== next && isVisible(activeLink)) {
++                    next = activeLink;
++                }
++            }
++        }
++        if (next !== null) {
++            setFocus(next);
++        }
++    } else if (event.key === 'Enter' && active && current !== null && document.contains(current)) {
++        event.preventDefault();
++        event.stopPropagation();
++        const target = current;
++        if (controlMode) {
++            // テレビ向けラッパーでは、全画面ボタンは独自全画面の切り替えとして扱う
++            if (isTvWrapper && isFullscreenButton(target)) {
++                exitControlMode();
++                setTvFullscreen(!tvFullscreen);
++                return;
++            }
++            // 設定パネルが開いている時に歯車を押したら、パネルを閉じてバーに留まる
++            if (isSettingPanelOpen() && isSettingButton(target)) {
++                closeSettingPanel();
++                setFocus(target);
++                return;
++            }
++            const inPlayer = target.closest('.dplayer') !== null;
++            clickInControlMode(target);
++            if (inPlayer) {
++                // 設定パネルが開いている (開いた) 間は操作モードを継続し、
++                // パネル内の項目 (画質・速度など) もそのまま選べるようにする
++                const box = document.querySelector('.dplayer-setting-box.dplayer-setting-box-open');
++                if (box !== null) {
++                    const pool = getControlCandidates();
++                    // パネル内の項目をクリックした場合はその項目に留まり、
++                    // 設定ボタンで開いた場合はパネル内の先頭項目へ移る
++                    const nextFocus = box.contains(target) && pool.includes(target)
++                        ? target
++                        : (pool.find((el) => box.contains(el)) ?? target);
++                    setFocus(nextFocus);
++                    return;
++                }
++                // 設定ボタンでパネルを閉じただけの場合はコントロールバーに留まる
++                if (isSettingButton(target)) {
++                    setFocus(target);
++                    return;
++                }
++            }
++            exitControlMode();
++            return;
++        }
++        // 番組表のセルはフォーカスの時点で選択 (展開) 済みなので、決定では
++        // クリック (選択解除になってしまう) ではなく、セル内の
++        // アクションボタン (番組詳細・視聴・録画予約) へ入る
++        if (target.classList.contains('timetable-program-cell')) {
++            const inside = getCandidates().filter((el) => el !== target && target.contains(el));
++            const first = firstInReadingOrder(inside);
++            if (first !== null) {
++                setFocus(first);
++                return;
++            }
++        }
++        target.click();
++    }
++}
++
++export function installTvSpatialNavigation(): void {
++    if (initialized) {
++        return;
++    }
++    initialized = true;
++    lastHref = location.href;
++    const style = document.createElement('style');
++    style.textContent = STYLE_TEXT;
++    document.head.appendChild(style);
++    document.addEventListener('keydown', onKeyDown, true);
++    document.addEventListener('mousedown', () => {
++        if (active) {
++            active = false;
++            if (controlMode) {
++                exitControlMode();
++            }
++            document.body.classList.remove(ACTIVE_CLASS);
++            setFocus(null);
++        }
++    });
++}
+--- a/client/src/views/Videos/Programs.vue
++++ b/client/src/views/Videos/Programs.vue
+@@ -8,7 +8,7 @@
+                 <div class="recorded-programs-container">
+                     <Breadcrumbs :crumbs="[
+                         { name: 'ホーム', path: '/' },
+-                        { name: 'ビデオをみる', path: '/videos/' },
++                        { name: 'ビデオをみる', path: '/videos/programs' },
+                         { name: '録画番組一覧', path: '/videos/programs', disabled: true },
+                     ]" />
+                     <div v-if="userStore.user?.is_admin" class="trash-link">
+@@ -17,15 +17,6 @@
+                             <span>ゴミ箱を開く</span>
+                         </RouterLink>
+                     </div>
+-                    <div class="list-actions">
+-                        <button type="button" class="list-actions__chip" :class="{'list-actions__chip--active': unwatched_only}"
+-                            @click="toggleUnwatchedOnly">
+-                            未視聴のみ
+-                        </button>
+-                        <button type="button" class="list-actions__chip" @click="show_highlights = true">
+-                            今日のハイライト
+-                        </button>
+-                    </div>
+                     <HighlightsDialog v-model:show="show_highlights" />
+                     <RecordedProgramList
+                         title="録画番組一覧"
+@@ -37,7 +28,21 @@
+                         :showBackButton="true"
+                         :showEmptyMessage="!is_loading"
+                         @update:page="updatePage"
+-                        @update:sortOrder="updateSortOrder($event as SortOrder)" />
++                        @update:sortOrder="updateSortOrder($event as SortOrder)">
++                        <!-- フィルタ類は一覧の見出し行 (並び替えと同じ行) に置く。
++                             独立した行に置くと、リモコンのフォーカスが届かなくなるため -->
++                        <template #actions>
++                            <div class="list-actions list-actions--in-header">
++                                <button type="button" class="list-actions__chip" :class="{'list-actions__chip--active': unwatched_only}"
++                                    @click="toggleUnwatchedOnly">
++                                    未視聴のみ
++                                </button>
++                                <button type="button" class="list-actions__chip" @click="show_highlights = true">
++                                    今日のハイライト
++                                </button>
++                            </div>
++                        </template>
++                    </RecordedProgramList>
+                 </div>
+             </div>
+         </main>
+@@ -233,6 +238,9 @@
+     display: flex;
+     gap: 8px;
+     margin-bottom: 10px;
++    &--in-header {
++        margin-bottom: 0px;
++    }
+     &__chip {
+         padding: 5px 12px;
+         border-radius: 999px;
+--- a/client/src/views/Videos/Search.vue
++++ b/client/src/views/Videos/Search.vue
+@@ -8,7 +8,7 @@
+                 <div class="videos-search-container">
+                     <Breadcrumbs :crumbs="[
+                         { name: 'ホーム', path: '/' },
+-                        { name: 'ビデオをみる', path: '/videos/' },
++                        { name: 'ビデオをみる', path: '/videos/programs' },
+                         { name: '検索結果', path: `/videos/search?query=${encodeURIComponent(query)}`, disabled: true },
+                     ]" />
+                     <RecordedProgramList
+@@ -21,7 +21,7 @@
+                         :isSearching="is_searching"
+                         :showBackButton="true"
+                         :breadcrumbs="[
+-                            { name: 'ビデオをみる', path: '/videos/' },
++                            { name: 'ビデオをみる', path: '/videos/programs' },
+                             { name: '検索結果', path: `/videos/search?query=${encodeURIComponent(query)}` },
+                         ]"
+                         @update:page="updatePage"
+--- a/client/src/views/Videos/Trash.vue
++++ b/client/src/views/Videos/Trash.vue
+@@ -8,7 +8,7 @@
+                 <div class="recorded-programs-container">
+                     <Breadcrumbs :crumbs="[
+                         { name: 'ホーム', path: '/' },
+-                        { name: 'ビデオをみる', path: '/videos/' },
++                        { name: 'ビデオをみる', path: '/videos/programs' },
+                         { name: 'ゴミ箱', path: '/videos/trash', disabled: true },
+                     ]" />
+                     <h1 class="trash-title">ゴミ箱</h1>
