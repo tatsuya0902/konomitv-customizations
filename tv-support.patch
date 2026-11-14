@@ -206,7 +206,7 @@
  const { updateServiceWorker } = useRegisterSW({
 --- a/client/src/utils/TvSpatialNavigation.ts
 +++ b/client/src/utils/TvSpatialNavigation.ts
-@@ -0,0 +1,967 @@
+@@ -0,0 +1,970 @@
 +// TvSpatialNavigation.ts
 +// テレビ向け D-pad 空間ナビゲーション
 +//
@@ -524,7 +524,11 @@
 +        }
 +        return v;
 +    };
-+    for (const pass of [0, 1]) {
++    // セルからの横移動は3段階: まず全ての優先条件、次に「表の中の番組だけ」
++    // (空の列があると隣の列に番組が無く、見出しが勝ってしまうため)、
++    // 最後に制限なし。それ以外は従来通り2段階 (優先条件あり) か1段階
++    const lastPass = preferCells ? 2 : ((deferChrome || preferRowOverlap || preferSameColumn || preferGrid) ? 1 : 0);
++    for (const pass of [0, 1, 2]) {
 +        let best: HTMLElement | null = null;
 +        let bestScore = Infinity;
 +        for (const el of candidates) {
@@ -555,10 +559,10 @@
 +            if (preferSameColumn && pass === 0 && Math.abs(rect.left - fromRect.left) > 2) {
 +                continue;
 +            }
-+            if (preferGrid && pass === 0 && !inGrid(el)) {
++            if (preferGrid && (pass === 0 || (preferCells && pass === 1)) && !inGrid(el)) {
 +                continue;
 +            }
-+            if (preferCells && pass === 0 && el.classList.contains('timetable-channel-header')) {
++            if (preferCells && pass < 2 && el.classList.contains('timetable-channel-header')) {
 +                continue;
 +            }
 +            // 縦移動では、現在の要素と横方向の範囲が重なる候補だけを対象にする
@@ -574,8 +578,7 @@
 +                best = el;
 +            }
 +        }
-+        if (best !== null || pass === 1
-+            || (!deferChrome && !preferRowOverlap && !preferSameColumn && !preferGrid && !preferCells)) {
++        if (best !== null || pass === lastPass) {
 +            // 表の右端では、表の外の要素が勝っても採用しない
 +            if (best !== null && gridRightEdgeStop && !inGrid(best)) {
 +                return null;
