@@ -1,5 +1,134 @@
-diff --git a/client/src/components/Watch/Watch.vue b/client/src/components/Watch/Watch.vue
-index aae90b9..32a960e 100644
+--- a/client/src/components/Videos/RecordedProgram.vue
++++ b/client/src/components/Videos/RecordedProgram.vue
+@@ -133,12 +133,6 @@
+                             </template>
+                             <v-list-item-title class="ml-3">ゴミ箱に移動する</v-list-item-title>
+                         </v-list-item>
+-                        <v-list-item @click="showDeleteConfirmation" :disabled="program.recorded_video.status === 'Recording' || protectionBusy || protection?.is_protected === true || isProtected" class="recorded-program__menu-list-item--danger">
+-                            <template v-slot:prepend>
+-                                <Icon icon="fluent:delete-24-regular" width="20px" height="20px" />
+-                            </template>
+-                            <v-list-item-title class="ml-3">録画ファイルを削除</v-list-item-title>
+-                        </v-list-item>
+                     </v-list>
+                 </v-menu>
+             </div>
+@@ -146,44 +140,6 @@
+     </router-link>
+     <RecordedFileInfoDialog :program="program" v-model:show="show_video_info" />
+ 
+-    <!-- 録画ファイル削除確認ダイアログ -->
+-    <v-dialog max-width="750" v-model="show_delete_confirmation">
+-        <v-card>
+-            <v-card-title class="d-flex justify-center pt-6 font-weight-bold">本当に録画ファイルを削除しますか？</v-card-title>
+-            <v-card-text class="pt-2 pb-0">
+-                <div class="font-weight-bold mb-2">{{ program.title }}</div>
+-                <template v-if="deletePreview?.enabled && deletePreview.plan">
+-                    <div class="mb-2">管理元: EPGStation / 録画ID: {{ deletePreview.plan.epgstation_id }}</div>
+-                    <div v-for="file in deletePreview.plan.files" :key="file.path" class="delete-confirmation__file-path mb-2">
+-                        {{ file.path }} ({{ file.size.toLocaleString() }} bytes)
+-                    </div>
+-                    <div class="mb-4">録画本体はEPGStationで削除し、KonomiTVとJellyfinの一覧も更新します。通信失敗時は同期状態を記録して再試行します。</div>
+-                </template>
+-                <div v-else class="delete-confirmation__file-path mb-4">{{ program.recorded_video.file_path }}</div>
+-                <div class="text-error-lighten-1 font-weight-bold">
+-                    <template v-if="deletePreview?.enabled">
+-                        上記の録画ファイルと、EPGStationが管理する関連データを削除します。<br>
+-                    </template>
+-                    <template v-else>
+-                        この録画ファイルに関連するすべてのデータ (サムネイル / .ts.program.txt / .ts.err を含む) が削除されます。<br>
+-                    </template>
+-                    元に戻すことはできません。本当に録画ファイルを削除しますか？
+-                </div>
+-            </v-card-text>
+-            <v-card-actions class="pt-4 px-6 pb-6">
+-                <v-spacer></v-spacer>
+-                <v-btn color="text" variant="text" @click="show_delete_confirmation = false">
+-                    <Icon icon="fluent:dismiss-20-regular" width="18px" height="18px" />
+-                    <span class="ml-1">キャンセル</span>
+-                </v-btn>
+-                <v-btn class="px-3" color="error" variant="flat" @click="deleteVideo">
+-                    <Icon icon="fluent:delete-20-regular" width="18px" height="18px" />
+-                    <span class="ml-1">録画ファイルを削除</span>
+-                </v-btn>
+-            </v-card-actions>
+-        </v-card>
+-    </v-dialog>
+-
+     <!-- ゴミ箱移動確認ダイアログ (ローカル改造) -->
+     <v-dialog max-width="750" v-model="show_trash_confirmation">
+         <v-card>
+@@ -221,7 +177,7 @@
+ import RecordedFileInfoDialog from '@/components/Videos/Dialogs/RecordedFileInfoDialog.vue';
+ import Message from '@/message';
+ import { recordingProtectionBadges, requestRecordingProtectionBadge, updateRecordingProtectionBadge } from '@/services/RecordingProtectionBadges';
+-import Videos, { IRecordedProgram, IRecordingDeletePreview, IRecordingProtection } from '@/services/Videos';
++import Videos, { IRecordedProgram, IRecordingProtection } from '@/services/Videos';
+ import useSettingsStore from '@/stores/SettingsStore';
+ import useUserStore from '@/stores/UserStore';
+ import Utils, { ProgramUtils } from '@/utils';
+@@ -244,10 +200,8 @@
+ // ファイル情報ダイアログの表示状態
+ const show_video_info = ref(false);
+ // ゴミ箱移動確認ダイアログの表示状態 (ローカル改造)
++// ローカル改造: 録画の完全削除はゴミ箱からのみ行う仕様のため、カードからの直接削除 UI は持たない
+ const show_trash_confirmation = ref(false);
+-// 削除確認ダイアログの表示状態
+-const show_delete_confirmation = ref(false);
+-const deletePreview = ref<IRecordingDeletePreview | null>(null);
+ 
+ // 一覧に並んだ時点でまとめて取得し、メニューを開かなくても分かるようにする。
+ // ローカル改造: バッジ取得 (ログイン時のみ実行される) の結果があればそれを優先し、
+@@ -377,31 +331,6 @@
+     Message.show('視聴履歴から削除しました。');
+ };
+ 
+-// 録画ファイル削除確認ダイアログを表示
+-const showDeleteConfirmation = async () => {
+-    const userStore = useUserStore();
+-    if (userStore.user === null || userStore.user.is_admin === false) {
+-        Message.warning('録画ファイルを削除するには管理者権限が必要です。\n管理者アカウントでログインし直してください。');
+-        return;
+-    }
+-    deletePreview.value = await Videos.fetchDeletePreview(props.program.id);
+-    if (deletePreview.value === null) return;
+-    show_delete_confirmation.value = true;
+-};
+-
+-// 録画ファイル削除
+-const deleteVideo = async () => {
+-    show_delete_confirmation.value = false;
+-    Message.info('録画ファイルの削除を開始します。完了までしばらくお待ちください。');
+-
+-    const result = await Videos.deleteVideo(props.program.id, deletePreview.value?.confirmation_token);
+-    if (result === true) {
+-        Message.success('録画ファイルを削除しました。');
+-        // 親コンポーネントに削除イベントを発行
+-        emit('deleted', props.program.id);
+-    }
+-};
+-
+ // ゴミ箱へ移動 (ローカル改造: ファイルは削除されず、保持期間内は復元できる)
+ const moveToTrash = async () => {
+     show_trash_confirmation.value = false;
+@@ -992,17 +921,6 @@
+     100% { opacity: 0; }
+ }
+ 
+-.delete-confirmation {
+-    &__file-path {
+-        padding: 12px;
+-        background-color: rgb(var(--v-theme-background-lighten-1));
+-        border-radius: 4px;
+-        font-size: 14px;
+-        word-break: break-all;
+-        white-space: pre-wrap;
+-    }
+-}
+-
+ .recorded-program__menu-list-item--danger {
+     color: rgb(var(--v-theme-error)) !important;
+ }
 --- a/client/src/components/Watch/Watch.vue
 +++ b/client/src/components/Watch/Watch.vue
 @@ -1,6 +1,6 @@
@@ -24,7 +153,7 @@ index aae90b9..32a960e 100644
              <WatchNavigation />
              <div class="watch-content"
                   @mousemove="playerStore.event_emitter.emit('SetControlDisplayTimer', {event: $event, is_player_region_event: true})"
-@@ -33,6 +40,7 @@ import LShapedScreenCropSettings from '@/components/Watch/LShapedScreenCropSetti
+@@ -33,6 +40,7 @@
  import WatchNavigation from '@/components/Watch/Navigation.vue';
  import WatchPanel from '@/components/Watch/Panel.vue';
  import WatchPlayer from '@/components/Watch/Player.vue';
@@ -32,7 +161,7 @@ index aae90b9..32a960e 100644
  import usePlayerStore from '@/stores/PlayerStore';
  import useSettingsStore from '@/stores/SettingsStore';
  import Utils from '@/utils';
-@@ -58,8 +66,16 @@ export default defineComponent({
+@@ -58,8 +66,16 @@
          return {
              // ユーティリティをテンプレートで使えるように
              Utils: Object.freeze(Utils),
@@ -49,7 +178,7 @@ index aae90b9..32a960e 100644
      computed: {
          ...mapStores(usePlayerStore, useSettingsStore),
      },
-@@ -69,6 +85,16 @@ export default defineComponent({
+@@ -69,6 +85,16 @@
              immediate: true,
              handler(isPseudoFullscreen: boolean) {
                  document.documentElement.classList.toggle('watch-pseudo-fullscreen', isPseudoFullscreen);
@@ -66,7 +195,7 @@ index aae90b9..32a960e 100644
              },
          },
          // 前回視聴画面を開いた際にパネルが表示されていたかどうかを随時保存する
-@@ -102,6 +128,8 @@ export default defineComponent({
+@@ -102,6 +128,8 @@
      // 終了前に実行
      beforeUnmount() {
  
@@ -75,7 +204,7 @@ index aae90b9..32a960e 100644
          document.documentElement.classList.remove('watch-pseudo-fullscreen');
  
          // PlayerStore に視聴画面を閉じたことを伝える
-@@ -126,19 +154,20 @@ html.watch-pseudo-fullscreen body {
+@@ -126,19 +154,20 @@
  
  .watch-container.watch-container--fullscreen.watch-container--pseudo-fullscreen {
      position: fixed;
@@ -102,7 +231,7 @@ index aae90b9..32a960e 100644
          display: none !important;
      }
      .watch-content, .watch-player, .watch-player__dplayer {
-@@ -152,6 +181,60 @@ html.watch-pseudo-fullscreen body {
+@@ -152,6 +181,60 @@
      }
  }
  
@@ -163,11 +292,59 @@ index aae90b9..32a960e 100644
  // 上書きしたいスタイル
  
  // コントロール表示時
-diff --git a/client/src/services/player/PlayerController.ts b/client/src/services/player/PlayerController.ts
-index f3f42c6..280c75c 100644
+--- a/client/src/main.ts
++++ b/client/src/main.ts
+@@ -150,5 +150,11 @@
+ 
+         // サーバーに保存されている設定データをこのクライアントに同期する
+         await settings_store.syncClientSettingsFromServer();
++
++    } else if (Utils.getAccessToken() !== null) {
++
++        // ローカル改造: 同期が無効な未同期の端末では、サーバーに保存済みの設定があればログイン時に自動で取り込む
++        // (同期が有効化された後は通常の同期パスに移行する。サーバーに保存済みの設定がない場合は何もしない)
++        await settings_store.adoptServerSettingsOnLogin();
+     }
+ }, 3 * 1000);  // 3秒おき
+--- a/client/src/services/CommentHighlights.ts
++++ b/client/src/services/CommentHighlights.ts
+@@ -24,6 +24,10 @@
+ const MIN_SEGMENT_BINS = 3;
+ // 区間の合計がこの比率を超えたら盛り上がり区間として扱わない
+ const MAX_COVERAGE_RATIO = 0.7;
++// 区間の前後に付ける余白 (秒)。実況コメントは映像より遅れて付くため開始側を長めに取り、
++// 相撲の取組のように瞬間的に決まる場面でも、始まりから決着の余韻まで含める
++const SEGMENT_PAD_START_SECONDS = 15;
++const SEGMENT_PAD_END_SECONDS = 10;
+ 
+ /** 盛り上がり区間 */
+ export interface IHighlightSegment {
+@@ -141,7 +145,21 @@
+     if (density.duration > 0 && covered / density.duration > MAX_COVERAGE_RATIO) {
+         return [];
+     }
+-    return segments;
++    // 区間に前後の余白を付け、重なった区間はまとめる
++    const padded: IHighlightSegment[] = [];
++    for (const segment of segments) {
++        const start = Math.max(0, segment.start - SEGMENT_PAD_START_SECONDS);
++        const end = Math.min(density.duration, segment.end + SEGMENT_PAD_END_SECONDS);
++        const last = padded[padded.length - 1];
++        if (last && start <= last.end) {
++            last.end = Math.max(last.end, end);
++            last.peak_density = Math.max(last.peak_density, segment.peak_density);
++            last.comment_count += segment.comment_count;
++        } else {
++            padded.push({ start, end, peak_density: segment.peak_density, comment_count: segment.comment_count });
++        }
++    }
++    return padded;
+ }
+ 
+ 
 --- a/client/src/services/player/PlayerController.ts
 +++ b/client/src/services/player/PlayerController.ts
-@@ -1719,6 +1719,21 @@ class PlayerController {
+@@ -1719,6 +1719,21 @@
                  event.preventDefault();
              }
          };
@@ -189,7 +366,7 @@ index f3f42c6..280c75c 100644
          document.addEventListener('fullscreenchange', fullscreen_handler);
          document.addEventListener('webkitfullscreenchange', fullscreen_handler);
          document.addEventListener('keydown', escape_handler);
-@@ -1726,6 +1741,8 @@ class PlayerController {
+@@ -1726,6 +1741,8 @@
              document.removeEventListener('fullscreenchange', fullscreen_handler);
              document.removeEventListener('webkitfullscreenchange', fullscreen_handler);
              document.removeEventListener('keydown', escape_handler);
@@ -198,10 +375,7 @@ index f3f42c6..280c75c 100644
          };
      }
  
-diff --git a/client/src/services/player/PseudoFullscreenLayout.ts b/client/src/services/player/PseudoFullscreenLayout.ts
-new file mode 100644
-index 0000000..97f8a75
---- /dev/null
+--- a/client/src/services/player/PseudoFullscreenLayout.ts
 +++ b/client/src/services/player/PseudoFullscreenLayout.ts
 @@ -0,0 +1,120 @@
 +/** iOS のデスクトップ表示では iPhone 表記が消えるため、タッチ対応も併せて判定する。 */
@@ -324,3 +498,100 @@ index 0000000..97f8a75
 +        }
 +    };
 +}
+--- a/client/src/services/player/managers/ExcitementManager.ts
++++ b/client/src/services/player/managers/ExcitementManager.ts
+@@ -29,8 +29,12 @@
+     private static readonly MAX_GAP_BINS = 2;
+     // 盛り上がり区間が全体のこの割合を超える場合はダイジェストの意味がないため区間なしとする
+     private static readonly MAX_COVERAGE_RATIO = 0.7;
+-    // ダイジェスト再生で区間開始位置より手前から再生する秒数 (文脈の前置き)
+-    private static readonly PREROLL_SECONDS = 3;
++    // 盛り上がり区間の前後に付ける余白 (秒)。実況コメントは映像より遅れて付くため開始側を長めに取り、
++    // 相撲の取組のように瞬間的に決まる場面でも、始まりから決着の余韻まで含める
++    private static readonly SEGMENT_PAD_START_SECONDS = 15;
++    private static readonly SEGMENT_PAD_END_SECONDS = 10;
++    // ダイジェスト再生で区間開始位置より手前から再生する秒数 (区間自体に余白を含むため 0)
++    private static readonly PREROLL_SECONDS = 0;
+ 
+     // DPlayer のインスタンス
+     private readonly player: DPlayer;
+@@ -228,7 +232,19 @@
+         if (this.duration > 0 && covered / this.duration > ExcitementManager.MAX_COVERAGE_RATIO) {
+             return [];
+         }
+-        return segments;
++        // 区間に前後の余白を付け、重なった区間はまとめる
++        const padded: { start: number; end: number }[] = [];
++        for (const segment of segments) {
++            const start = Math.max(0, segment.start - ExcitementManager.SEGMENT_PAD_START_SECONDS);
++            const end = Math.min(this.duration, segment.end + ExcitementManager.SEGMENT_PAD_END_SECONDS);
++            const last = padded[padded.length - 1];
++            if (last && start <= last.end) {
++                last.end = Math.max(last.end, end);
++            } else {
++                padded.push({ start, end });
++            }
++        }
++        return padded;
+     }
+ 
+ 
+--- a/client/src/stores/SettingsStore.ts
++++ b/client/src/stores/SettingsStore.ts
+@@ -587,6 +587,14 @@
+  */
+ export let is_syncing_client_settings_from_server: boolean = false;
+ 
++/**
++ * ローカル改造: ログイン時のサーバー設定の自動取り込みを試行済みのアクセストークン
++ * 同じログインセッションでは再試行せず、別のログイン (別のトークン) では改めて試行するために、
++ * 試行済みかどうかではなく試行したトークン自体を保持する
++ * このフラグを Store に含めると Store の更新イベントが発生して意味がないので、やむを得ず Store の外に定義している
++ */
++export let server_settings_adoption_attempted_token: string | null = null;
++
+ 
+ /**
+  * 設定データを共有するストア
+@@ -723,6 +731,41 @@
+             }
+         },
+ 
++        /**
++         * ローカル改造: ログイン時、この端末が未同期 (last_synced_at = 0) で同期が無効な場合に限り、
++         * サーバーに保存済みの設定データがあれば自動で取り込み、同期を有効化する
++         * 「設定をデバイス間で同期する」が同期対象外の端末ローカル設定であるため、新しい端末や
++         * LocalStorage を初期化した端末では、サーバーに設定が保存されていても自動では反映されなかった問題への対処
++         * 同期を意図的に無効化した端末 (一度でも同期したことがある端末) では何もしない
++         * 試行はログイン (アクセストークン) ごとに一度だけ行う
++         */
++        async adoptServerSettingsOnLogin(): Promise<void> {
++
++            // 未ログイン・試行済み・同期が有効・同期したことがある端末では実行しない
++            const access_token = Utils.getAccessToken();
++            if (access_token === null || server_settings_adoption_attempted_token === access_token ||
++                this.settings.sync_settings === true || this.settings.last_synced_at !== 0) {
++                return;
++            }
++            server_settings_adoption_attempted_token = access_token;
++
++            // サーバーに保存済みの設定データがあるか (最終同期時刻が 0 でないか) を確認する
++            // 未保存のアカウントではサーバーはデフォルト値 (last_synced_at = 0) を返すため、その場合は何もしない
++            const settings_server = await Settings.fetchClientSettings();
++            if (settings_server === null || settings_server.last_synced_at === 0) {
++                return;
++            }
++
++            // サーバーの設定データをこのクライアントに同期する (同期が無効でも強制実行する)
++            await this.syncClientSettingsFromServer(true);
++
++            // 取り込みが完了していたら、この端末でも同期を有効化する
++            if (this.settings.last_synced_at > 0) {
++                this.settings.sync_settings = true;
++                console.log('Adopted client settings from server and enabled sync_settings.');
++            }
++        },
++
+         /**
+          * ログイン時かつ同期が有効な場合、このクライアントの設定をサーバーに同期する
+          * @param force ログイン中なら同期が有効かに関わらず実行する (デフォルト: false)

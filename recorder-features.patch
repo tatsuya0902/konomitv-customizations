@@ -1,0 +1,3267 @@
+--- a/client/src/components/Reservations/ReservationDetailDrawer.vue
++++ b/client/src/components/Reservations/ReservationDetailDrawer.vue
+@@ -75,6 +75,10 @@
+         <!-- フッター -->
+         <div class="reservation-detail-drawer__footer" v-if="!isPastProgram">
+             <div class="reservation-detail-drawer__actions">
++                <v-btn v-if="watchPath" class="px-3" color="secondary" variant="flat" @click="watchCurrentProgram">
++                    <Icon icon="fluent:play-16-filled" width="20px" height="20px" />
++                    <span class="ml-1">視聴</span>
++                </v-btn>
+                 <!-- 実際の予約がある場合: 削除ボタン -->
+                 <v-btn v-if="hasRealReservation" class="px-3" variant="text" @click="handleDelete">
+                     <Icon icon="fluent:delete-16-regular" width="20px" height="20px" />
+@@ -190,11 +194,13 @@
+ import ReservationProgramInfo from '@/components/Reservations/ReservationProgramInfo.vue';
+ import ReservationRecordingSettings from '@/components/Reservations/ReservationRecordingSettings.vue';
+ import Message from '@/message';
++import router from '@/router';
+ import { type IChannel } from '@/services/Channels';
+ import { type IProgram } from '@/services/Programs';
+ import Reservations, { type IReservation, type IRecordSettings, type IRecordSettingsPresets } from '@/services/Reservations';
+ import useServerSettingsStore from '@/stores/ServerSettingsStore';
+-import { ProgramUtils } from '@/utils';
++import { ProgramUtils, dayjs } from '@/utils';
++import { useProgramWatch, GetProgramWatchPath } from '@/utils/ProgramWatch';
+ 
+ // Props
+ const props = defineProps<{
+@@ -265,6 +271,17 @@
+ 
+ // 表示用の番組情報（予約があればそちらを優先）
+ const displayProgram = computed(() => props.reservation?.program ?? props.program ?? null);
++const displayChannel = computed(() => props.reservation?.channel ?? props.channel ?? null);
++const watchPath = useProgramWatch(() => displayProgram.value, () => displayChannel.value, () => isVisible.value);
++
++/** 録画予約の保存・変更は行わず、既存のライブ視聴ルートへ移動する。 */
++function watchCurrentProgram(): void {
++    const path = GetProgramWatchPath(displayProgram.value, displayChannel.value, dayjs().valueOf());
++    if (path) {
++        isVisible.value = false;
++        router.push(path);
++    }
++}
+ 
+ // EDCB バックエンドかどうか
+ // サーバー設定がまだ取得されていない場合は EDCB と判定しない
+--- a/client/src/components/TimeTable/TimeTableProgramCell.vue
++++ b/client/src/components/TimeTable/TimeTableProgramCell.vue
+@@ -43,6 +43,11 @@
+                     <Icon icon="fluent:info-12-regular" width="16px" />
+                     <span>番組詳細</span>
+                 </v-btn>
++                <v-btn v-if="watchPath" variant="flat" size="small" class="timetable-program-cell__action-button"
++                    @click.stop="watchCurrentProgram">
++                    <Icon icon="fluent:play-16-filled" width="16px" />
++                    <span>視聴</span>
++                </v-btn>
+                 <!-- 録画予約ボタン: 予約なしの場合は追加、予約ありの場合は有効/無効切替 -->
+                 <v-btn variant="flat" size="small"
+                     class="timetable-program-cell__action-button"
+@@ -63,11 +68,13 @@
+ 
+ import { computed, nextTick, ref, watch } from 'vue';
+ 
++import router from '@/router';
+ import { ITimeTableChannel, ITimeTableProgram } from '@/services/Programs';
+ import useSettingsStore from '@/stores/SettingsStore';
+ import useTimeTableStore from '@/stores/TimeTableStore';
+ import { dayjs } from '@/utils';
+ import { ProgramUtils } from '@/utils/ProgramUtils';
++import { useProgramWatch, GetProgramWatchPath } from '@/utils/ProgramWatch';
+ import { TimeTableUtils } from '@/utils/TimeTableUtils';
+ import Utils from '@/utils/Utils';
+ 
+@@ -174,6 +181,13 @@
+ /**
+  * 予約がある場合
+  */
++const watchPath = useProgramWatch(() => props.program, () => props.channel, () => isExpanded.value);
++
++/** クリックの瞬間にも時刻とチャンネルの一致を再確認し、終了済み番組からの誤遷移を防ぐ。 */
++function watchCurrentProgram(): void {
++    const path = GetProgramWatchPath(props.program, props.channel, dayjs().valueOf());
++    if (path) router.push(path);
++}
+ const hasReservation = computed(() => {
+     return props.program.reservation !== null;
+ });
+--- a/client/src/components/Videos/HighlightsDialog.vue
++++ b/client/src/components/Videos/HighlightsDialog.vue
+@@ -0,0 +1,200 @@
++<template>
++    <v-dialog max-width="700" transition="slide-y-transition" :model-value="show" @update:model-value="$emit('update:show', $event)">
++        <v-card class="highlights">
++            <v-card-title class="px-5 pt-6 pb-3 d-flex align-center font-weight-bold" style="height: 60px;">
++                <Icon icon="fluent:fire-16-filled" height="24px" />
++                <span class="ml-3">今日のハイライト</span>
++                <v-spacer></v-spacer>
++                <div v-ripple class="d-flex align-center rounded-circle cursor-pointer px-2 py-2" @click="$emit('update:show', false)">
++                    <Icon icon="fluent:dismiss-12-filled" width="23px" height="23px" />
++                </div>
++            </v-card-title>
++            <div class="px-5 pb-6">
++                <div class="highlights__summary">
++                    <span v-if="is_loading">今日の録画から盛り上がり区間を探しています…</span>
++                    <span v-else-if="items.length === 0">今日の録画に、コメントの盛り上がり区間は見つかりませんでした</span>
++                    <span v-else>{{items.length}} 区間・合計 {{formatPlaybackTime(total_seconds)}} (実況コメントの盛り上がりから自動抽出)</span>
++                </div>
++                <div class="highlights__list">
++                    <div v-for="(item, index) in items" :key="index" class="highlights__item">
++                        <span class="highlights__time">{{formatPlaybackTime(item.start)}}</span>
++                        <span class="highlights__title">{{item.title}}</span>
++                        <span class="highlights__count">{{item.comment_count}} 件</span>
++                    </div>
++                </div>
++                <div class="highlights__footer">
++                    <v-btn color="primary" variant="flat" :disabled="is_loading || items.length === 0" @click="startPlayback">
++                        ハイライトを再生
++                    </v-btn>
++                </div>
++            </div>
++        </v-card>
++    </v-dialog>
++</template>
++<script lang="ts">
++
++import { defineComponent } from 'vue';
++
++import { extractHighlightSegments, fetchCommentDensity, formatPlaybackTime, MIN_COMMENTS_FOR_HIGHLIGHTS } from '@/services/CommentHighlights';
++import { IHighlightReelItem, startHighlightReel } from '@/services/HighlightReel';
++import Videos, { IRecordedProgram } from '@/services/Videos';
++
++// ローカル改造: 今日の録画から実況コメントの盛り上がり区間を抽出し、横断再生するダイアログ
++interface IDisplayItem extends IHighlightReelItem {
++    comment_count: number;
++}
++
++export default defineComponent({
++    name: 'HighlightsDialog',
++    props: {
++        show: {
++            type: Boolean,
++            default: false,
++        },
++    },
++    emits: ['update:show'],
++    data() {
++        return {
++            // ユーティリティをテンプレートで使えるように
++            formatPlaybackTime: Object.freeze(formatPlaybackTime),
++
++            // 抽出したハイライト区間と読み込み状態
++            items: [] as IDisplayItem[],
++            is_loading: false,
++        };
++    },
++    computed: {
++        total_seconds(): number {
++            return this.items.reduce((sum, item) => sum + (item.end - item.start), 0);
++        },
++    },
++    watch: {
++        // ダイアログが開かれたらハイライトを抽出する
++        async show(is_shown: boolean): Promise<void> {
++            if (is_shown === true) {
++                await this.computeHighlights();
++            }
++        },
++    },
++    methods: {
++        // 今日の録画 (放送開始が今日のもの) から盛り上がり区間を抽出する
++        async computeHighlights(): Promise<void> {
++            this.is_loading = true;
++            this.items = [];
++            try {
++                const now = new Date();
++                const today_start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
++                // 今日の録画を全ページから集める (新しい順に取得し、今日より古い番組が出たら打ち切る)
++                const todays_programs: IRecordedProgram[] = [];
++                let page = 1;
++                let total = Number.POSITIVE_INFINITY;
++                while (todays_programs.length < total && page <= 10) {
++                    const result = await Videos.fetchVideos('desc', page);
++                    if (result === null) {
++                        break;
++                    }
++                    total = result.total;
++                    let reached_older = false;
++                    for (const program of result.recorded_programs) {
++                        if (new Date(program.start_time).getTime() < today_start) {
++                            reached_older = true;
++                            break;
++                        }
++                        if (program.recorded_video.status === 'Recorded') {
++                            todays_programs.push(program);
++                        }
++                    }
++                    if (reached_older) {
++                        break;
++                    }
++                    page += 1;
++                }
++                // 古い順に、各録画から盛り上がりの強い区間を最大3つまで拾う (コメント取得の負荷を抑えるため対象は12件まで)
++                const items: IDisplayItem[] = [];
++                for (const program of todays_programs.slice().reverse().slice(0, 12)) {
++                    const density = await fetchCommentDensity(program.id, program.recorded_video.duration);
++                    if (density === null || density.total < MIN_COMMENTS_FOR_HIGHLIGHTS) {
++                        continue;
++                    }
++                    const segments = extractHighlightSegments(density);
++                    const top_segments = [...segments]
++                        .sort((a, b) => b.peak_density - a.peak_density)
++                        .slice(0, 3)
++                        .sort((a, b) => a.start - b.start);
++                    for (const segment of top_segments) {
++                        items.push({
++                            video_id: program.id,
++                            title: program.title,
++                            start: Math.max(0, segment.start - 3),  // 区間の少し手前から再生する
++                            end: segment.end,
++                            comment_count: segment.comment_count,
++                        });
++                    }
++                }
++                this.items = items;
++            } finally {
++                this.is_loading = false;
++            }
++        },
++        // ハイライト再生を開始する (キューを保存し、最初の録画の視聴画面へ移動する)
++        startPlayback(): void {
++            if (this.items.length === 0) {
++                return;
++            }
++            const reel_items: IHighlightReelItem[] = this.items.map((item) => ({
++                video_id: item.video_id,
++                title: item.title,
++                start: item.start,
++                end: item.end,
++            }));
++            startHighlightReel(reel_items);
++            this.$emit('update:show', false);
++            void this.$router.push({ path: `/videos/watch/${reel_items[0].video_id}` });
++        },
++    },
++});
++
++</script>
++<style lang="scss" scoped>
++
++.highlights {
++    &__summary {
++        font-size: 12.5px;
++        opacity: 0.8;
++    }
++    &__list {
++        margin-top: 10px;
++        max-height: 46vh;
++        overflow-y: auto;
++    }
++    &__item {
++        display: flex;
++        align-items: baseline;
++        gap: 10px;
++        padding: 7px 10px;
++    }
++    &__time {
++        flex-shrink: 0;
++        font-size: 12.5px;
++        font-weight: bold;
++        color: #e64f97;
++    }
++    &__title {
++        font-size: 13.5px;
++        white-space: nowrap;
++        overflow: hidden;
++        text-overflow: ellipsis;
++    }
++    &__count {
++        flex-shrink: 0;
++        font-size: 12px;
++        opacity: 0.75;
++    }
++    &__footer {
++        display: flex;
++        justify-content: flex-end;
++        margin-top: 16px;
++    }
++}
++
++</style>
+--- a/client/src/components/Videos/RecordedProgram.vue
++++ b/client/src/components/Videos/RecordedProgram.vue
+@@ -13,6 +13,10 @@
+                     <Icon icon="fluent:lock-closed-16-filled" width="14px" height="14px" />
+                     <span>保護中</span>
+                 </div>
++                <div v-if="isUnwatched" class="recorded-program__unwatched"
++                    :class="{'recorded-program__unwatched--stacked': isProtected}" aria-label="未視聴">
++                    <span>未視聴</span>
++                </div>
+                 <div class="recorded-program__thumbnail-duration">{{ProgramUtils.getProgramDuration(program)}}</div>
+                 <div v-if="program.recorded_video.status === 'Recording'" class="recorded-program__thumbnail-status recorded-program__thumbnail-status--recording">
+                     <div class="recorded-program__thumbnail-status-dot"></div>
+@@ -122,6 +126,13 @@
+                             </template>
+                             <v-list-item-title class="ml-3">{{ protectionBusy ? '保護状態を確認中…' : protection?.is_protected ? '録画の保護を解除' : '録画を保護する' }}</v-list-item-title>
+                         </v-list-item>
++                        <v-list-item v-if="useUserStore().user?.is_admin" @click="show_trash_confirmation = true"
++                            :disabled="program.recorded_video.status === 'Recording' || protectionBusy || protection?.is_protected === true || isProtected">
++                            <template v-slot:prepend>
++                                <Icon icon="fluent:archive-24-regular" width="20px" height="20px" />
++                            </template>
++                            <v-list-item-title class="ml-3">ゴミ箱に移動する</v-list-item-title>
++                        </v-list-item>
+                         <v-list-item @click="showDeleteConfirmation" :disabled="program.recorded_video.status === 'Recording' || protectionBusy || protection?.is_protected === true || isProtected" class="recorded-program__menu-list-item--danger">
+                             <template v-slot:prepend>
+                                 <Icon icon="fluent:delete-24-regular" width="20px" height="20px" />
+@@ -172,7 +183,37 @@
+             </v-card-actions>
+         </v-card>
+     </v-dialog>
++
++    <!-- ゴミ箱移動確認ダイアログ (ローカル改造) -->
++    <v-dialog max-width="750" v-model="show_trash_confirmation">
++        <v-card>
++            <v-card-title class="d-flex justify-center pt-6 font-weight-bold">ゴミ箱に移動しますか？</v-card-title>
++            <v-card-text class="pt-2 pb-0">
++                <div class="font-weight-bold mb-2">{{ program.title }}</div>
++                <div class="mb-4">
++                    一覧や検索から隠します。ファイル自体は削除されず、保持期間内はゴミ箱から復元できます。<br>
++                    期間を過ぎると自動的に完全に削除されます。
++                </div>
++            </v-card-text>
++            <v-card-actions class="pt-4 px-6 pb-6">
++                <v-spacer></v-spacer>
++                <v-btn color="text" variant="text" @click="show_trash_confirmation = false">
++                    <Icon icon="fluent:dismiss-20-regular" width="18px" height="18px" />
++                    <span class="ml-1">キャンセル</span>
++                </v-btn>
++                <v-btn class="px-3" color="warning" variant="flat" @click="moveToTrash">
++                    <Icon icon="fluent:archive-20-regular" width="18px" height="18px" />
++                    <span class="ml-1">ゴミ箱に移動</span>
++                </v-btn>
++            </v-card-actions>
++        </v-card>
++    </v-dialog>
+ </template>
++<script lang="ts">
++// ローカル改造: ローカル視聴履歴からサーバー視聴状態への移行報告を行った録画 ID (このセッション内のみ保持)
++const watchedBackfillReportedIds = new Set<number>();
++</script>
++
+ <script lang="ts" setup>
+ 
+ import { ref, computed, watch } from 'vue';
+@@ -202,6 +243,8 @@
+ 
+ // ファイル情報ダイアログの表示状態
+ const show_video_info = ref(false);
++// ゴミ箱移動確認ダイアログの表示状態 (ローカル改造)
++const show_trash_confirmation = ref(false);
+ // 削除確認ダイアログの表示状態
+ const show_delete_confirmation = ref(false);
+ const deletePreview = ref<IRecordingDeletePreview | null>(null);
+@@ -217,6 +260,8 @@
+     }
+     return props.program.is_protected === true;
+ });
++
++// ローカル改造: 未視聴の判定 (isUnwatched) は watchHistory の定義後にまとめて行う
+ watch(() => [props.program.id, useUserStore().user?.id], () => {
+     if (useUserStore().user) requestRecordingProtectionBadge(props.program.id);
+ }, {immediate: true});
+@@ -306,6 +351,24 @@
+     return settingsStore.settings.watched_history.find(history => history.video_id === props.program.id);
+ });
+ 
++// ローカル改造: 未視聴の判定
++// サーバー側の視聴状態に記録が一切なければ未視聴とする (少しでも再生が報告されていれば視聴済み)
++// 端末ローカルの視聴履歴だけがある場合 (サーバー一元化より前に見た録画) も視聴済みとして扱い、
++// ローカルの最終位置をサーバーへ一度だけ報告して状態を揃える
++const isUnwatched = computed(() => {
++    return props.program.recorded_video.status === 'Recorded' &&
++        props.program.watched_ratio !== null && props.program.watched_ratio <= 0 &&
++        !(watchHistory.value && watchHistory.value.last_playback_position > 0);
++});
++watch(() => [props.program.id, props.program.watched_ratio, watchHistory.value?.last_playback_position] as const, async () => {
++    const history = watchHistory.value;
++    if (props.program.recorded_video.status !== 'Recorded' || props.program.watched_ratio !== 0) return;
++    if (!history || history.last_playback_position <= 0) return;
++    if (watchedBackfillReportedIds.has(props.program.id)) return;
++    watchedBackfillReportedIds.add(props.program.id);
++    await Videos.reportWatched(props.program.id, history.last_playback_position);
++}, { immediate: true });
++
+ // 視聴履歴から削除
+ const removeFromWatchedHistory = () => {
+     settingsStore.settings.watched_history = settingsStore.settings.watched_history.filter(history => {
+@@ -339,6 +402,17 @@
+     }
+ };
+ 
++// ゴミ箱へ移動 (ローカル改造: ファイルは削除されず、保持期間内は復元できる)
++const moveToTrash = async () => {
++    show_trash_confirmation.value = false;
++    const result = await Videos.moveToTrash(props.program.id);
++    if (result === true) {
++        Message.success('ゴミ箱に移動しました。保持期間内はゴミ箱から復元できます。');
++        // 一覧から消える点は削除と同じなので、親には削除イベントを発行する
++        emit('deleted', props.program.id);
++    }
++};
++
+ </script>
+ <style lang="scss" scoped>
+ 
+@@ -492,6 +566,25 @@
+         pointer-events: none;
+     }
+ 
++    &__unwatched {
++        position: absolute;
++        bottom: 8px;
++        left: 4px;
++        padding: 4px 6px;
++        border-radius: 3px;
++        background: #e64f97;
++        color: #ffffff;
++        font-size: 11px;
++        font-weight: 700;
++        line-height: 1;
++        pointer-events: none;
++
++        // 保護中バッジ (左下) と重なる場合はその上へ積む
++        &--stacked {
++            bottom: 30px;
++        }
++    }
++
+     &__content {
+         display: flex;
+         flex-direction: column;
+--- a/client/src/components/Watch/Panel/ChapterListDialog.vue
++++ b/client/src/components/Watch/Panel/ChapterListDialog.vue
+@@ -10,6 +10,15 @@
+                 </div>
+             </v-card-title>
+             <div class="px-5 pb-6">
++                <div v-if="highlight_segments.length > 0" class="chapter-list__highlights">
++                    <div class="chapter-list__highlights-title">見どころ（コメントの盛り上がり）</div>
++                    <div v-for="(segment, index) in highlight_segments" :key="index" v-ripple class="chapter-list__highlight-item"
++                        @click="seekTo(segment.start)">
++                        <Icon icon="fluent:fire-16-filled" width="16px" height="16px" style="color: #e64f97; flex-shrink: 0;" />
++                        <span class="chapter-list__highlight-time">{{formatPlaybackTime(segment.start)}} 〜 {{formatPlaybackTime(segment.end)}}</span>
++                        <span class="chapter-list__highlight-count">コメント {{segment.comment_count}} 件</span>
++                    </div>
++                </div>
+                 <div v-if="chapters.length === 0" class="py-6 text-center">場面サムネイルがまだ生成されていません</div>
+                 <div v-else class="chapter-list__grid">
+                     <div v-for="chapter in chapters" :key="chapter.time" v-ripple class="chapter-list__item" @click="seekTo(chapter.time)">
+@@ -26,6 +35,7 @@
+ import { mapStores } from 'pinia';
+ import { defineComponent, PropType } from 'vue';
+ 
++import { extractHighlightSegments, fetchCommentDensity, formatPlaybackTime, IHighlightSegment, MIN_COMMENTS_FOR_HIGHLIGHTS } from '@/services/CommentHighlights';
+ import { IRecordedProgram } from '@/services/Videos';
+ import usePlayerStore from '@/stores/PlayerStore';
+ import Utils from '@/utils';
+@@ -44,6 +54,31 @@
+         },
+     },
+     emits: ['update:show'],
++    data() {
++        return {
++            // ユーティリティをテンプレートで使えるように
++            formatPlaybackTime: Object.freeze(formatPlaybackTime),
++
++            // コメントの盛り上がりから抽出した見どころ区間
++            highlight_segments: [] as IHighlightSegment[],
++            highlights_loaded_for: null as number | null,
++        };
++    },
++    watch: {
++        // ダイアログが開かれたら、見どころ区間を読み込む (同じ録画では再取得しない)
++        async show(is_shown: boolean): Promise<void> {
++            if (is_shown !== true || this.highlights_loaded_for === this.program.id) {
++                return;
++            }
++            this.highlights_loaded_for = this.program.id;
++            const density = await fetchCommentDensity(this.program.id, this.program.recorded_video.duration);
++            if (density !== null && density.total >= MIN_COMMENTS_FOR_HIGHLIGHTS) {
++                this.highlight_segments = extractHighlightSegments(density);
++            } else {
++                this.highlight_segments = [];
++            }
++        },
++    },
+     computed: {
+         ...mapStores(usePlayerStore),
+         chapters(): { time: number; label: string; style: Record<string, string> }[] {
+@@ -94,6 +129,34 @@
+ <style lang="scss" scoped>
+ 
+ .chapter-list {
++    &__highlights {
++        margin-bottom: 20px;
++    }
++    &__highlights-title {
++        font-size: 13px;
++        font-weight: bold;
++        opacity: 0.85;
++        margin-bottom: 8px;
++    }
++    &__highlight-item {
++        display: flex;
++        align-items: center;
++        gap: 8px;
++        padding: 8px 10px;
++        border-radius: 6px;
++        cursor: pointer;
++        &:hover {
++            background: rgba(230, 79, 151, 0.10);
++        }
++    }
++    &__highlight-time {
++        font-size: 13.5px;
++        font-weight: bold;
++    }
++    &__highlight-count {
++        font-size: 12px;
++        opacity: 0.75;
++    }
+     &__grid {
+         display: grid;
+         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+--- a/client/src/components/Watch/Panel/CommentSearchDialog.vue
++++ b/client/src/components/Watch/Panel/CommentSearchDialog.vue
+@@ -0,0 +1,137 @@
++<template>
++    <v-dialog max-width="700" transition="slide-y-transition" :model-value="show" @update:model-value="$emit('update:show', $event)">
++        <v-card class="comment-search">
++            <v-card-title class="px-5 pt-6 pb-3 d-flex align-center font-weight-bold" style="height: 60px;">
++                <Icon icon="fluent:search-16-filled" height="24px" />
++                <span class="ml-3">コメント検索</span>
++                <v-spacer></v-spacer>
++                <div v-ripple class="d-flex align-center rounded-circle cursor-pointer px-2 py-2" @click="$emit('update:show', false)">
++                    <Icon icon="fluent:dismiss-12-filled" width="23px" height="23px" />
++                </div>
++            </v-card-title>
++            <div class="px-5 pb-6">
++                <v-text-field v-model="query" label="実況コメントを検索 (例: 選手名・実況の言葉)" variant="outlined" density="compact"
++                    hide-details clearable autofocus />
++                <div class="comment-search__summary">
++                    <span v-if="is_loading">コメントを読み込んでいます…</span>
++                    <span v-else-if="comments.length === 0">この録画には実況コメントがありません</span>
++                    <span v-else-if="query.trim() === ''">コメント {{comments.length}} 件 (キーワードを入力すると絞り込めます)</span>
++                    <span v-else>{{filtered_comments.length}} 件ヒット (クリックでその場面へ移動)</span>
++                </div>
++                <div class="comment-search__results">
++                    <div v-for="(comment, index) in filtered_comments" :key="index" v-ripple class="comment-search__item"
++                        @click="seekTo(comment.time)">
++                        <span class="comment-search__time">{{formatPlaybackTime(comment.time)}}</span>
++                        <span class="comment-search__text">{{comment.text}}</span>
++                    </div>
++                    <div v-if="query.trim() !== '' && filtered_comments.length === 0 && is_loading === false && comments.length > 0"
++                        class="py-4 text-center">一致するコメントがありません</div>
++                </div>
++            </div>
++        </v-card>
++    </v-dialog>
++</template>
++<script lang="ts">
++
++import { mapStores } from 'pinia';
++import { defineComponent, PropType } from 'vue';
++
++import { formatPlaybackTime } from '@/services/CommentHighlights';
++import Videos, { IJikkyoComment, IRecordedProgram } from '@/services/Videos';
++import usePlayerStore from '@/stores/PlayerStore';
++
++// ローカル改造: 録画の実況コメント (過去ログ) を検索し、ヒットした瞬間へシークするダイアログ
++export default defineComponent({
++    name: 'CommentSearchDialog',
++    props: {
++        program: {
++            type: Object as PropType<IRecordedProgram>,
++            required: true,
++        },
++        show: {
++            type: Boolean,
++            default: false,
++        },
++    },
++    emits: ['update:show'],
++    data() {
++        return {
++            // ユーティリティをテンプレートで使えるように
++            formatPlaybackTime: Object.freeze(formatPlaybackTime),
++
++            // 検索キーワードと、読み込んだコメント
++            query: '',
++            comments: [] as IJikkyoComment[],
++            is_loading: false,
++            loaded_for: null as number | null,
++        };
++    },
++    computed: {
++        ...mapStores(usePlayerStore),
++        filtered_comments(): IJikkyoComment[] {
++            const keyword = this.query.trim().toLowerCase();
++            if (keyword === '') {
++                return [];
++            }
++            return this.comments.filter((comment) => comment.text.toLowerCase().includes(keyword)).slice(0, 100);
++        },
++    },
++    watch: {
++        // ダイアログが開かれたらコメントを読み込む (同じ録画では再取得しない)
++        async show(is_shown: boolean): Promise<void> {
++            if (is_shown !== true || this.loaded_for === this.program.id) {
++                return;
++            }
++            this.loaded_for = this.program.id;
++            this.is_loading = true;
++            const result = await Videos.fetchVideoJikkyoComments(this.program.id);
++            this.comments = result.is_success === true ? result.comments : [];
++            this.is_loading = false;
++        },
++    },
++    methods: {
++        seekTo(time: number): void {
++            this.playerStore.event_emitter.emit('SeekRequest', { playback_position: time });
++            this.$emit('update:show', false);
++        },
++    },
++});
++
++</script>
++<style lang="scss" scoped>
++
++.comment-search {
++    &__summary {
++        margin-top: 12px;
++        font-size: 12.5px;
++        opacity: 0.8;
++    }
++    &__results {
++        margin-top: 8px;
++        max-height: 46vh;
++        overflow-y: auto;
++    }
++    &__item {
++        display: flex;
++        align-items: baseline;
++        gap: 10px;
++        padding: 7px 10px;
++        border-radius: 6px;
++        cursor: pointer;
++        &:hover {
++            background: rgba(230, 79, 151, 0.10);
++        }
++    }
++    &__time {
++        flex-shrink: 0;
++        font-size: 12.5px;
++        font-weight: bold;
++        color: #e64f97;
++    }
++    &__text {
++        font-size: 13.5px;
++        word-break: break-all;
++    }
++}
++
++</style>
+--- a/client/src/components/Watch/Panel/RecordedProgram.vue
++++ b/client/src/components/Watch/Panel/RecordedProgram.vue
+@@ -72,6 +72,20 @@
+                     <Icon icon="fluent:fast-forward-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
+                     <span style="margin-left: 6px;">ダイジェスト再生{{digest_active ? '（ON）' : ''}}</span>
+                 </div>
++                <div v-ripple class="program-info__button" @click="show_comment_search = true">
++                    <Icon icon="fluent:search-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
++                    <span style="margin-left: 6px;">コメント検索</span>
++                </div>
++                <div v-ripple class="program-info__button" @click="reserveNextBroadcast">
++                    <Icon icon="fluent:calendar-clock-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
++                    <span style="margin-left: 6px;">次回を予約</span>
++                </div>
++                <div v-ripple class="program-info__button"
++                    :class="{'program-info__button--digest-active': sleep_timer_mode !== 'off'}"
++                    @click="cycleSleepTimer">
++                    <Icon icon="fluent:timer-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
++                    <span style="margin-left: 6px;">{{sleepTimerLabel}}</span>
++                </div>
+             </div>
+         </section>
+         <section class="program-detail-container">
+@@ -82,6 +96,7 @@
+             </div>
+         </section>
+         <ChapterListDialog :program="playerStore.recorded_program" v-model:show="show_chapter_list" />
++        <CommentSearchDialog :program="playerStore.recorded_program" v-model:show="show_comment_search" />
+     </div>
+ </template>
+ <script lang="ts">
+@@ -90,7 +105,10 @@
+ import { defineComponent } from 'vue';
+ 
+ import ChapterListDialog from '@/components/Watch/Panel/ChapterListDialog.vue';
++import CommentSearchDialog from '@/components/Watch/Panel/CommentSearchDialog.vue';
+ import Message from '@/message';
++import Programs, { IProgramSearchCondition } from '@/services/Programs';
++import Reservations from '@/services/Reservations';
+ import usePlayerStore from '@/stores/PlayerStore';
+ import useSettingsStore from '@/stores/SettingsStore';
+ import Utils, { ProgramUtils } from '@/utils';
+@@ -99,6 +117,7 @@
+     name: 'Panel-RecordedProgramTab',
+     components: {
+         ChapterListDialog,
++        CommentSearchDialog,
+     },
+     data() {
+         return {
+@@ -112,9 +131,19 @@
+             // 場面一覧ダイアログの表示状態
+             show_chapter_list: false,
+ 
++            // コメント検索ダイアログの表示状態
++            show_comment_search: false,
++
+             // ダイジェスト再生の状態 (ExcitementManager から DigestStateChanged で通知される)
+             digest_available: false,
+             digest_active: false,
++
++            // 次回予約の実行中フラグ
++            is_reserving_next: false,
++
++            // おやすみタイマーの状態 (SleepTimerManager から SleepTimerStateChanged で通知される)
++            sleep_timer_mode: 'off' as 'off' | 'minutes' | 'end',
++            sleep_timer_remaining: null as number | null,
+         };
+     },
+     computed: {
+@@ -126,6 +155,19 @@
+                 item.type === 'RecordedProgram' && item.id === this.playerStore.recorded_program.id
+             );
+         },
++
++        // おやすみタイマーボタンのラベル
++        sleepTimerLabel(): string {
++            if (this.sleep_timer_mode === 'end') {
++                return 'おやすみ (番組の終わりで停止)';
++            }
++            if (this.sleep_timer_mode === 'minutes' && this.sleep_timer_remaining !== null) {
++                const minutes = Math.floor(this.sleep_timer_remaining / 60);
++                const seconds = this.sleep_timer_remaining % 60;
++                return `おやすみ (残り ${minutes}:${seconds.toString().padStart(2, '0')})`;
++            }
++            return 'おやすみタイマー';
++        },
+     },
+     methods: {
+         // 指定された録画番組の視聴画面へ移動する (前の話・次の話ボタン用)
+@@ -137,6 +179,71 @@
+         toggleDigest(): void {
+             this.playerStore.event_emitter.emit('DigestToggleRequest', {});
+         },
++        // おやすみタイマーのモード切り替えをプレイヤー側 (SleepTimerManager) へ依頼する
++        cycleSleepTimer(): void {
++            this.playerStore.event_emitter.emit('SleepTimerCycleRequest', {});
++        },
++        // 次回放送 (来週分) を番組表から検索し、デフォルトの録画設定で予約する
++        async reserveNextBroadcast(): Promise<void> {
++            if (this.is_reserving_next) {
++                return;
++            }
++            const program = this.playerStore.recorded_program;
++            // 検索キーワードはタイトルから [字][解] などのマークと話数表記 (#5 / 第N話) を除いたものを使う
++            // (来週分のタイトルには話数表記が含まれないことが多く、そのままだと検索に一致しないため)
++            const keyword = (program.series_title || program.title)
++                .replace(/\[[^\]]*\]/g, '')
++                .replace(/#\s*\d+/g, '')
++                .replace(/第\s*\d+\s*[話回]/g, '')
++                .replace(/\s+/g, ' ')
++                .trim() || program.title;
++            this.is_reserving_next = true;
++            try {
++                const condition: IProgramSearchCondition = {
++                    is_enabled: true,
++                    keyword,
++                    exclude_keyword: '',
++                    note: '',
++                    is_title_only: true,
++                    is_case_sensitive: false,
++                    is_fuzzy_search_enabled: false,
++                    is_regex_search_enabled: false,
++                    service_ranges: (program.network_id !== null && program.service_id !== null) ? [{
++                        network_id: program.network_id,
++                        transport_stream_id: program.channel?.transport_stream_id ?? 0,
++                        service_id: program.service_id,
++                    }] : null,
++                    genre_ranges: null,
++                    is_exclude_genre_ranges: false,
++                    date_ranges: null,
++                    is_exclude_date_ranges: false,
++                    duration_range_min: null,
++                    duration_range_max: null,
++                    broadcast_type: 'All',
++                    duplicate_title_check_scope: 'None',
++                    duplicate_title_check_period_days: 6,
++                };
++                const result = await Programs.searchPrograms(condition);
++                const now = Date.now();
++                const candidates = (result?.programs ?? [])
++                    .filter((candidate) => new Date(candidate.start_time).getTime() > now && candidate.event_id !== program.event_id)
++                    .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
++                if (candidates.length === 0) {
++                    Message.show('次回の放送が見つかりませんでした。');
++                    return;
++                }
++                const next = candidates[0];
++                const record_settings = await Reservations.fetchDefaultRecordSettings();
++                const success = await Reservations.addReservation(next.id, record_settings);
++                if (success) {
++                    const start = new Date(next.start_time);
++                    const minutes = start.getMinutes().toString().padStart(2, '0');
++                    Message.show(`次回「${next.title}」(${start.getMonth() + 1}/${start.getDate()} ${start.getHours()}:${minutes}〜) を予約しました。`);
++                }
++            } finally {
++                this.is_reserving_next = false;
++            }
++        },
+         // マイリストの追加/削除を切り替える
+         toggleMylist(): void {
+             const program = this.playerStore.recorded_program;
+@@ -168,11 +275,17 @@
+             this.digest_available = state.available;
+             this.digest_active = state.active;
+         });
++        // おやすみタイマーの状態 (モードと残り時間) を受け取る
++        this.playerStore.event_emitter.on('SleepTimerStateChanged', (state: {mode: 'off' | 'minutes' | 'end'; remaining_seconds: number | null}) => {
++            this.sleep_timer_mode = state.mode;
++            this.sleep_timer_remaining = state.remaining_seconds;
++        });
+     },
+     beforeUnmount() {
+         // CommentReceived イベントの全てのイベントハンドラーを削除
+         this.playerStore.event_emitter.off('CommentReceived');
+         this.playerStore.event_emitter.off('DigestStateChanged');
++        this.playerStore.event_emitter.off('SleepTimerStateChanged');
+     },
+ });
+ 
+@@ -308,6 +421,7 @@
+             align-items: center;
+             padding: 5px 8px;
+             margin-top: 16px;
++            margin-right: 10px;
+             color: rgb(var(--v-theme-text-darken-1));
+             font-size: 12.7px;
+             line-height: 170%;
+--- a/client/src/router/index.ts
++++ b/client/src/router/index.ts
+@@ -50,6 +50,11 @@
+             component: () => import('@/views/Videos/Programs.vue'),
+         },
+         {
++            path: '/videos/trash',
++            name: 'Videos Trash',
++            component: () => import('@/views/Videos/Trash.vue'),
++        },
++        {
+             path: '/videos/watch/:video_id',
+             name: 'Videos Watch',
+             component: () => import('@/views/Videos/Watch.vue'),
+--- a/client/src/services/CommentHighlights.ts
++++ b/client/src/services/CommentHighlights.ts
+@@ -0,0 +1,161 @@
++import Videos, { IJikkyoComment } from '@/services/Videos';
++
++/**
++ * 実況コメントの密度 (盛り上がり) を計算する共通ユーティリティ (ローカル改造)
++ *
++ * ExcitementManager (プレイヤー内のグラフ表示・ダイジェスト再生) と同じ計算方法で、
++ * 番組情報パネルの「見どころ」表示やハイライト横断再生から利用する。
++ * 計算方法: 5秒ビンに集計 → 3ビンの移動平均で平滑化 → 最大値で正規化し、
++ * 最大値の40%以上の連続区間 (隙間2ビンまで連結、3ビン未満は除外) を盛り上がり区間とする。
++ * ただし区間の合計が全体の70%を超える場合は、盛り上がり区間としては扱わない。
++ */
++
++// 1 ビンの秒数
++export const COMMENT_BIN_SECONDS = 5;
++
++// 盛り上がりとして扱うために必要なコメント総数の下限
++export const MIN_COMMENTS_FOR_HIGHLIGHTS = 50;
++
++// 盛り上がり区間とみなす密度の閾値 (最大値に対する比率)
++const SEGMENT_THRESHOLD_RATIO = 0.4;
++// 連結を許す隙間の最大ビン数
++const MAX_GAP_BINS = 2;
++// 区間として扱う最小ビン数
++const MIN_SEGMENT_BINS = 3;
++// 区間の合計がこの比率を超えたら盛り上がり区間として扱わない
++const MAX_COVERAGE_RATIO = 0.7;
++
++/** 盛り上がり区間 */
++export interface IHighlightSegment {
++    start: number;  // 開始位置 (秒)
++    end: number;  // 終了位置 (秒)
++    peak_density: number;  // 区間内の最大密度 (0.0〜1.0)
++    comment_count: number;  // 区間内のコメント数
++}
++
++/** コメント密度の計算結果 */
++export interface ICommentDensity {
++    densities: number[];  // 正規化済み密度 (ビンごと)
++    counts: number[];  // 生のコメント数 (ビンごと)
++    total: number;  // コメント総数
++    duration: number;  // 計算に使った尺 (秒)
++}
++
++
++/**
++ * 指定された録画の過去ログコメントを取得し、密度を計算する
++ * コメントが取得できない場合は null、コメントが少ない場合は total が下限未満の結果を返す
++ * @param video_id 録画の ID
++ * @param duration 録画の尺 (秒)
++ */
++export async function fetchCommentDensity(video_id: number, duration: number): Promise<ICommentDensity | null> {
++    const result = await Videos.fetchVideoJikkyoComments(video_id);
++    if (result.is_success !== true) {
++        return null;
++    }
++    return computeCommentDensity(result.comments, duration);
++}
++
++
++/**
++ * コメントのリストから密度を計算する
++ * @param comments 過去ログコメント (time が再生位置 (秒) のもの)
++ * @param duration 録画の尺 (秒)。0 の場合はコメントの最大位置から推定する
++ */
++export function computeCommentDensity(comments: IJikkyoComment[], duration: number): ICommentDensity {
++    const positions = comments.map((comment) => comment.time);
++    const max_position = positions.reduce((max, pos) => Math.max(max, pos), 0);
++    const effective_duration = duration > 0 ? duration : max_position + COMMENT_BIN_SECONDS;
++
++    const bin_count = Math.max(1, Math.ceil(effective_duration / COMMENT_BIN_SECONDS));
++    const counts = new Array<number>(bin_count).fill(0);
++    for (const position of positions) {
++        const index = Math.min(bin_count - 1, Math.max(0, Math.floor(position / COMMENT_BIN_SECONDS)));
++        counts[index] += 1;
++    }
++    // 3 ビンの移動平均で平滑化し、最大値で正規化する (ExcitementManager と同じ)
++    const smoothed = counts.map((_, i) => {
++        const prev = counts[Math.max(0, i - 1)];
++        const curr = counts[i];
++        const next = counts[Math.min(bin_count - 1, i + 1)];
++        return (prev + curr * 2 + next) / 4;
++    });
++    const max_density = Math.max(...smoothed, 0.0001);
++    const densities = smoothed.map((value) => value / max_density);
++    return { densities, counts, total: comments.length, duration: effective_duration };
++}
++
++
++/**
++ * 密度から盛り上がり区間を抽出する (ExcitementManager と同じルール)
++ * @param density コメント密度の計算結果
++ */
++export function extractHighlightSegments(density: ICommentDensity): IHighlightSegment[] {
++    const hot = density.densities.map((value) => value >= SEGMENT_THRESHOLD_RATIO);
++    // 隙間埋め
++    for (let i = 0; i < hot.length; i++) {
++        if (hot[i] === true) {
++            continue;
++        }
++        let gap = 0;
++        while (i + gap < hot.length && hot[i + gap] === false) {
++            gap++;
++        }
++        const before = i > 0 && hot[i - 1] === true;
++        const after = i + gap < hot.length && hot[i + gap] === true;
++        if (before && after && gap <= MAX_GAP_BINS) {
++            for (let j = 0; j < gap; j++) {
++                hot[i + j] = true;
++            }
++        }
++        i += gap;
++    }
++    // 連続区間の抽出と短い区間の除外
++    const segments: IHighlightSegment[] = [];
++    let start_bin: number | null = null;
++    for (let i = 0; i <= hot.length; i++) {
++        if (i < hot.length && hot[i] === true) {
++            if (start_bin === null) {
++                start_bin = i;
++            }
++        } else if (start_bin !== null) {
++            if (i - start_bin >= MIN_SEGMENT_BINS) {
++                let peak = 0;
++                let comment_count = 0;
++                for (let bin = start_bin; bin < i; bin++) {
++                    peak = Math.max(peak, density.densities[bin]);
++                    comment_count += density.counts[bin];
++                }
++                segments.push({
++                    start: start_bin * COMMENT_BIN_SECONDS,
++                    end: i * COMMENT_BIN_SECONDS,
++                    peak_density: peak,
++                    comment_count,
++                });
++            }
++            start_bin = null;
++        }
++    }
++    // カバー率が高すぎる場合は盛り上がり区間として扱わない
++    const covered = segments.reduce((sum, segment) => sum + (segment.end - segment.start), 0);
++    if (density.duration > 0 && covered / density.duration > MAX_COVERAGE_RATIO) {
++        return [];
++    }
++    return segments;
++}
++
++
++/**
++ * 秒数を m:ss / h:mm:ss 形式の文字列にする
++ * @param seconds 秒数
++ */
++export function formatPlaybackTime(seconds: number): string {
++    const total = Math.max(0, Math.floor(seconds));
++    const hours = Math.floor(total / 3600);
++    const minutes = Math.floor((total % 3600) / 60);
++    const secs = total % 60;
++    if (hours > 0) {
++        return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
++    }
++    return `${minutes}:${secs.toString().padStart(2, '0')}`;
++}
+--- a/client/src/services/HighlightReel.ts
++++ b/client/src/services/HighlightReel.ts
+@@ -0,0 +1,68 @@
++/**
++ * ハイライト横断再生の再生キューを sessionStorage で引き継ぐためのモジュール (ローカル改造)
++ * HighlightsDialog がキューを作成し、視聴画面の HighlightReelManager が順に再生する。
++ * sessionStorage を使うため、タブを閉じるとキューは消える。
++ */
++
++/** ハイライトの1区間 */
++export interface IHighlightReelItem {
++    video_id: number;  // 録画の ID
++    title: string;  // 番組タイトル (表示用)
++    start: number;  // 再生開始位置 (秒)
++    end: number;  // 再生終了位置 (秒)
++}
++
++/** ハイライト再生キュー */
++export interface IHighlightReel {
++    items: IHighlightReelItem[];
++    index: number;  // 現在再生中の区間のインデックス
++}
++
++const STORAGE_KEY = 'konomi_highlight_reel';
++
++
++/**
++ * ハイライト再生を開始する (キューを保存する)
++ * @param items 再生する区間のリスト
++ */
++export function startHighlightReel(items: IHighlightReelItem[]): void {
++    const reel: IHighlightReel = { items, index: 0 };
++    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(reel));
++}
++
++
++/**
++ * 保存されているハイライト再生キューを取得する。なければ null
++ */
++export function getHighlightReel(): IHighlightReel | null {
++    try {
++        const raw = sessionStorage.getItem(STORAGE_KEY);
++        if (raw === null) {
++            return null;
++        }
++        const reel = JSON.parse(raw) as IHighlightReel;
++        if (!Array.isArray(reel.items) || typeof reel.index !== 'number' || reel.items.length === 0) {
++            return null;
++        }
++        return reel;
++    } catch {
++        return null;
++    }
++}
++
++
++/**
++ * ハイライト再生キューを保存し直す (インデックスの進行時)
++ * @param reel ハイライト再生キュー
++ */
++export function saveHighlightReel(reel: IHighlightReel): void {
++    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(reel));
++}
++
++
++/**
++ * ハイライト再生キューを破棄する
++ */
++export function clearHighlightReel(): void {
++    sessionStorage.removeItem(STORAGE_KEY);
++}
+--- a/client/src/services/Videos.ts
++++ b/client/src/services/Videos.ts
+@@ -121,6 +121,7 @@
+     recording_end_margin: number;
+     is_partially_recorded: boolean;
+     is_protected: boolean | null;
++    watched_ratio: number | null;
+     next_episode_id: number | null;
+     previous_episode_id: number | null;
+     channel: IChannel | null;
+@@ -156,6 +157,7 @@
+     recording_end_margin: 0,
+     is_partially_recorded: false,
+     is_protected: null,
++    watched_ratio: null,
+     next_episode_id: null,
+     previous_episode_id: null,
+     channel: null,
+@@ -213,6 +215,19 @@
+     is_protected: boolean | null;
+ }
+ 
++/** ゴミ箱内の録画 1 件を表すインターフェース (ローカル改造) */
++export interface ITrashItem {
++    program: IRecordedProgram;
++    trashed_at: string;
++    purge_at: string;
++}
++
++/** ゴミ箱の一覧を表すインターフェース (ローカル改造) */
++export interface ITrashList {
++    retention_days: number;
++    items: ITrashItem[];
++}
++
+ class Videos {
+ 
+     /**
+@@ -325,6 +340,18 @@
+ 
+ 
+     /**
++     * 録画の視聴進捗 (到達した再生位置) をサーバーへ報告する (ローカル改造)
++     * 視聴状態はサーバー側で一元管理され、一覧の watched_ratio として全端末に返される
++     * 報告の失敗は視聴の妨げにならないよう、エラー表示は行わない
++     * @param video_id 録画番組の ID
++     * @param position 到達した再生位置 (秒)
++     */
++    static async reportWatched(video_id: number, position: number): Promise<void> {
++        await APIClient.post(`/videos/${video_id}/watched`, { position });
++    }
++
++
++    /**
+      * 録画番組のメタデータを再解析する
+      * @param video_id 録画番組の ID
+      * @returns メタデータ再解析に成功した場合は true
+@@ -432,6 +459,36 @@
+         }
+         return true;
+     }
++
++    /** ゴミ箱の中身を取得する (ローカル改造) */
++    static async fetchTrashList(): Promise<ITrashList | null> {
++        const response = await APIClient.get<ITrashList>('/recorder/trash');
++        if (response.type === 'error') {
++            APIClient.showGenericError(response, 'ゴミ箱の一覧を取得できませんでした。');
++            return null;
++        }
++        return response.data;
++    }
++
++    /** 録画をゴミ箱へ移動する (ローカル改造: ファイルは削除されず、保持期間内は復元できる) */
++    static async moveToTrash(video_id: number): Promise<boolean> {
++        const response = await APIClient.post(`/recorder/trash/${video_id}`, undefined);
++        if (response.type === 'error') {
++            APIClient.showGenericError(response, 'ゴミ箱への移動に失敗しました。');
++            return false;
++        }
++        return true;
++    }
++
++    /** 録画をゴミ箱から復元する (ローカル改造) */
++    static async restoreFromTrash(video_id: number): Promise<boolean> {
++        const response = await APIClient.post(`/recorder/trash/${video_id}/restore`, undefined);
++        if (response.type === 'error') {
++            APIClient.showGenericError(response, 'ゴミ箱からの復元に失敗しました。');
++            return false;
++        }
++        return true;
++    }
+ }
+ 
+ export default Videos;
+--- a/client/src/services/player/PlayerController.ts
++++ b/client/src/services/player/PlayerController.ts
+@@ -11,6 +11,11 @@
+ import CaptureManager from '@/services/player/managers/CaptureManager';
+ import DocumentPiPManager from '@/services/player/managers/DocumentPiPManager';
+ import ExcitementManager from '@/services/player/managers/ExcitementManager';
++import ChasePlaybackManager from '@/services/player/managers/ChasePlaybackManager';
++import AutoPlayNextManager from '@/services/player/managers/AutoPlayNextManager';
++import SleepTimerManager from '@/services/player/managers/SleepTimerManager';
++import HighlightReelManager from '@/services/player/managers/HighlightReelManager';
++import WatchedReportManager from '@/services/player/managers/WatchedReportManager';
+ import KeyboardShortcutManager from '@/services/player/managers/KeyboardShortcutManager';
+ import LiveCommentManager from '@/services/player/managers/LiveCommentManager';
+ import LiveDataBroadcastingManager from '@/services/player/managers/LiveDataBroadcastingManager';
+@@ -119,8 +124,13 @@
+         const player_store = usePlayerStore();
+         if (player_store.selected_quality_profile_type !== null) {
+             // 視聴画面内で手動変更済みなら、プレイヤー再作成後もその選択を使う
+-            // 視聴画面を離れると PlayerStore.reset() で null に戻り、次回は回線種別から選び直す
++            // 視聴画面を離れると PlayerStore.reset() で null に戻るが、その場合は
++            // 端末ローカル設定に保存された前回の選択 (last_quality_profile_type) を引き継ぐ (ローカル改造)
+             this.quality_profile_type = player_store.selected_quality_profile_type;
++        } else if (useSettingsStore().settings.last_quality_profile_type !== null) {
++            // ローカル改造: 前回手動で切り替えた画質プロファイルが保存されていれば、
++            // ページを移動したり別の録画を開いたりしてもその選択を引き継ぐ
++            this.quality_profile_type = useSettingsStore().settings.last_quality_profile_type!;
+         } else {
+             // 手動変更がない場合は、現在の回線種別から画質プロファイルを選ぶ
+             // Wi-Fi 回線の場合や回線種別を取得できなかった場合は、Wi-Fi 向けの画質プロファイルを使う
+@@ -190,6 +200,35 @@
+ 
+ 
+     /**
++     * ローカル改造: 現在再生中の画質を、現在の画質プロファイル (Wi-Fi / モバイル回線) の
++     * デフォルト画質として端末ローカル設定に保存する
++     * 次回プレイヤーを開いたとき (別の録画でも) に、最後に選んだ画質で開始できるようにするため
++     */
++    private saveCurrentQualityToSettings(): void {
++        if (!this.player || !this.player.options.video.quality || typeof this.player.qualityIndex !== 'number') {
++            return;
++        }
++        const quality_name: string | undefined = this.player.options.video.quality[this.player.qualityIndex]?.name;
++        if (quality_name === undefined) {
++            return;
++        }
++        const settings_store = useSettingsStore();
++        const is_cellular = this.quality_profile_type === 'Cellular';
++        if (this.playback_mode === 'Live') {
++            if ((LIVE_STREAMING_QUALITIES as string[]).includes(quality_name)) {
++                settings_store.settings[is_cellular ? 'tv_streaming_quality_cellular' : 'tv_streaming_quality'] =
++                    quality_name as LiveStreamingQuality;
++            }
++        } else {
++            if ((VIDEO_STREAMING_QUALITIES as string[]).includes(quality_name)) {
++                settings_store.settings[is_cellular ? 'video_streaming_quality_cellular' : 'video_streaming_quality'] =
++                    quality_name as VideoStreamingQuality;
++            }
++        }
++    }
++
++
++    /**
+      * ライブ視聴: 許容する HTMLMediaElement の内部再生バッファの秒数
+      */
+     private get live_playback_buffer_seconds(): number {
+@@ -988,6 +1027,7 @@
+                 new DocumentPiPManager(this.player, this.playback_mode),
+                 new KeyboardShortcutManager(this.player, this.playback_mode),
+                 new MediaSessionManager(this.player, this.playback_mode),
++                new SleepTimerManager(this.player, this.playback_mode),
+             ];
+         } else {
+             // ビデオ視聴時に設定する PlayerManager
+@@ -998,6 +1038,11 @@
+                 new MediaSessionManager(this.player, this.playback_mode),
+                 new SeekControlManager(this.player, this.playback_mode),
+                 new ExcitementManager(this.player, this.playback_mode),
++                new ChasePlaybackManager(this.player, this.playback_mode),
++                new AutoPlayNextManager(this.player, this.playback_mode),
++                new SleepTimerManager(this.player, this.playback_mode),
++                new HighlightReelManager(this.player, this.playback_mode),
++                new WatchedReportManager(this.player, this.playback_mode),
+             ];
+         }
+ 
+@@ -1480,6 +1525,13 @@
+         // 画質切り替え開始時のイベント
+         this.player.on('quality_start', on_init_or_quality_change);
+ 
++        // ローカル改造: 画質の切り替えが完了したら、その画質を現在の画質プロファイルの
++        // デフォルト画質として端末ローカル設定に保存する
++        // (ページを移動したり別の録画を開いたりしても、最後に選んだ画質が維持されるようにするため)
++        this.player.on('quality_end', () => {
++            this.saveCurrentQualityToSettings();
++        });
++
+         // 動画の統計情報の表示/非表示を切り替える隠しコマンドのイベントハンドラーを登録
+         // iOS / iPadOS Safari では DPlayer 側の contextmenu が長押ししても発火しないため、代替の表示手段として用意
+         // 番組情報タブ内の NEXT >> を 500ms 以内に3回連続でタップすると統計情報の表示/非表示が切り替わる
+@@ -1723,6 +1775,8 @@
+             if (toggle_mobile_profile_input.checked) {
+                 this.quality_profile_type = 'Cellular';
+                 player_store.selected_quality_profile_type = this.quality_profile_type;
++                // ローカル改造: ページを移動しても選択を引き継げるよう、端末ローカル設定にも保存する
++                useSettingsStore().settings.last_quality_profile_type = this.quality_profile_type;
+                 player_store.event_emitter.emit('PlayerRestartRequired', {
+                     message: 'モバイル回線向けの画質プロファイルに切り替えました。',
+                     // 他の通知と被らないように、メッセージを遅らせて表示する
+@@ -1735,6 +1789,8 @@
+             } else {
+                 this.quality_profile_type = 'Wi-Fi';
+                 player_store.selected_quality_profile_type = this.quality_profile_type;
++                // ローカル改造: ページを移動しても選択を引き継げるよう、端末ローカル設定にも保存する
++                useSettingsStore().settings.last_quality_profile_type = this.quality_profile_type;
+                 player_store.event_emitter.emit('PlayerRestartRequired', {
+                     message: 'Wi-Fi 回線向けの画質プロファイルに切り替えました。',
+                     // 他の通知と被らないように、メッセージを遅らせて表示する
+--- a/client/src/services/player/SleepTimerState.ts
++++ b/client/src/services/player/SleepTimerState.ts
+@@ -0,0 +1,8 @@
++/**
++ * おやすみタイマーの状態を PlayerManager 間で共有するためのモジュール (ローカル改造)
++ * SleepTimerManager が書き込み、AutoPlayNextManager が「番組の終わりで停止」の判定に参照する
++ */
++export const sleep_timer_state = {
++    // true の場合、録画の再生終了時に次の話を自動再生せず、そのまま停止する
++    stop_at_end: false,
++};
+--- a/client/src/services/player/managers/AutoPlayNextManager.ts
++++ b/client/src/services/player/managers/AutoPlayNextManager.ts
+@@ -0,0 +1,184 @@
++import DPlayer from 'dplayer';
++
++import router from '@/router';
++import PlayerManager from '@/services/player/PlayerManager';
++import { sleep_timer_state } from '@/services/player/SleepTimerState';
++import Videos from '@/services/Videos';
++import usePlayerStore from '@/stores/PlayerStore';
++
++/**
++ * 録画の再生が終わったら、次の話をカウントダウン付きで自動再生する PlayerManager (ローカル改造)
++ *
++ * 次の話 (next_episode_id) がある録画でのみ有効になる。再生終了時にプレイヤー右下へ
++ * 「あと N 秒で次の話」というカードを表示し、キャンセルされなければ次の話の視聴画面へ移動する。
++ * おやすみタイマーの「番組の終わりで停止」が有効な場合は、自動再生せずにそのまま停止する。
++ * ユーザーが再生を再開した場合 (その場に留まる意思表示) もカウントダウンを中止する。
++ */
++class AutoPlayNextManager implements PlayerManager {
++
++    // ユーザー操作により DPlayer 側で画質が切り替わった際、この PlayerManager の再起動が必要かどうかを示す値
++    public readonly restart_required_when_quality_switched = false;
++
++    // 自動再生までのカウントダウン (秒)
++    private static readonly COUNTDOWN_SECONDS = 10;
++
++    // DPlayer のインスタンス
++    private readonly player: DPlayer;
++
++    // 再生モード (Live: ライブ視聴, Video: ビデオ視聴)
++    private readonly playback_mode: 'Live' | 'Video';
++
++    // 次の話の ID と、イベントリスナー・タイマー・表示要素
++    private next_episode_id: number | null = null;
++    private on_ended: (() => void) | null = null;
++    private on_play: (() => void) | null = null;
++    private overlay_element: HTMLDivElement | null = null;
++    private countdown_timer: ReturnType<typeof setInterval> | null = null;
++    private countdown_remaining = 0;
++
++    constructor(player: DPlayer, playback_mode: 'Live' | 'Video') {
++        this.player = player;
++        this.playback_mode = playback_mode;
++    }
++
++
++    /**
++     * AutoPlayNextManager を初期化する
++     * 次の話がある録画でのみ、再生終了を待ち受ける
++     */
++    public async init(): Promise<void> {
++        if (this.playback_mode !== 'Video') {
++            return;
++        }
++        const next_episode_id = usePlayerStore().recorded_program?.next_episode_id ?? null;
++        if (next_episode_id === null) {
++            return;
++        }
++        this.next_episode_id = next_episode_id;
++        this.on_ended = () => {
++            void this.showCountdown();
++        };
++        this.player.video.addEventListener('ended', this.on_ended);
++    }
++
++
++    /**
++     * AutoPlayNextManager を破棄する
++     */
++    public async destroy(): Promise<void> {
++        if (this.on_ended !== null) {
++            this.player.video.removeEventListener('ended', this.on_ended);
++            this.on_ended = null;
++        }
++        this.clearCountdown();
++    }
++
++
++    /**
++     * 再生終了時にカウントダウンカードを表示し、自動再生のタイマーを開始する
++     */
++    private async showCountdown(): Promise<void> {
++        if (this.next_episode_id === null) {
++            return;
++        }
++        // おやすみタイマー (番組の終わりで停止) が有効な場合は自動再生しない
++        if (sleep_timer_state.stop_at_end) {
++            this.player.notice('おやすみタイマーのため、ここで停止します');
++            return;
++        }
++        const next_program = await Videos.fetchVideo(this.next_episode_id);
++        const next_title = next_program?.title ?? '次の話';
++
++        this.clearCountdown();
++        const container = this.player.container;
++        const overlay = document.createElement('div');
++        overlay.style.cssText = 'position: absolute; right: 16px; bottom: 76px; z-index: 60; max-width: 78%;' +
++            'background: rgba(0,0,0,0.85); color: #fff; border-radius: 8px; padding: 12px 14px;' +
++            'font-size: 13px; line-height: 1.5; box-shadow: 0 4px 16px rgba(0,0,0,0.4);';
++        overlay.addEventListener('click', (event) => event.stopPropagation());
++
++        const label = document.createElement('div');
++        label.textContent = '次の話を再生します';
++        label.style.cssText = 'font-size: 11px; opacity: 0.75;';
++        overlay.appendChild(label);
++
++        const title = document.createElement('div');
++        title.textContent = next_title;
++        title.style.cssText = 'font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px;';
++        overlay.appendChild(title);
++
++        const row = document.createElement('div');
++        row.style.cssText = 'display: flex; align-items: center; gap: 10px; margin-top: 8px;';
++        const countdown = document.createElement('span');
++        countdown.style.cssText = 'font-size: 12px; opacity: 0.9;';
++        row.appendChild(countdown);
++
++        const play_button = document.createElement('button');
++        play_button.type = 'button';
++        play_button.textContent = '今すぐ再生';
++        play_button.style.cssText = 'font-size: 12px; padding: 5px 10px; border-radius: 999px; border: none;' +
++            'background: #e64f97; color: #fff; cursor: pointer;';
++        play_button.addEventListener('click', () => this.goNext());
++        row.appendChild(play_button);
++
++        const cancel_button = document.createElement('button');
++        cancel_button.type = 'button';
++        cancel_button.textContent = 'キャンセル';
++        cancel_button.style.cssText = 'font-size: 12px; padding: 5px 10px; border-radius: 999px;' +
++            'border: 1px solid rgba(255,255,255,0.6); background: transparent; color: #fff; cursor: pointer;';
++        cancel_button.addEventListener('click', () => this.clearCountdown());
++        row.appendChild(cancel_button);
++
++        overlay.appendChild(row);
++        container.appendChild(overlay);
++        this.overlay_element = overlay;
++
++        // ユーザーが再生を再開したら、その場に留まる意思表示としてカウントダウンを中止する
++        this.on_play = () => this.clearCountdown();
++        this.player.video.addEventListener('play', this.on_play);
++
++        this.countdown_remaining = AutoPlayNextManager.COUNTDOWN_SECONDS;
++        countdown.textContent = `あと ${this.countdown_remaining} 秒`;
++        this.countdown_timer = setInterval(() => {
++            this.countdown_remaining -= 1;
++            if (this.countdown_remaining <= 0) {
++                this.goNext();
++                return;
++            }
++            countdown.textContent = `あと ${this.countdown_remaining} 秒`;
++        }, 1000);
++    }
++
++
++    /**
++     * カウントダウンを中止し、カードを取り除く
++     */
++    private clearCountdown(): void {
++        if (this.countdown_timer !== null) {
++            clearInterval(this.countdown_timer);
++            this.countdown_timer = null;
++        }
++        if (this.on_play !== null) {
++            this.player.video.removeEventListener('play', this.on_play);
++            this.on_play = null;
++        }
++        if (this.overlay_element !== null) {
++            this.overlay_element.remove();
++            this.overlay_element = null;
++        }
++    }
++
++
++    /**
++     * 次の話の視聴画面へ移動する
++     */
++    private goNext(): void {
++        const next_episode_id = this.next_episode_id;
++        this.clearCountdown();
++        if (next_episode_id !== null) {
++            void router.push({ path: `/videos/watch/${next_episode_id}` });
++        }
++    }
++}
++
++export default AutoPlayNextManager;
+--- a/client/src/services/player/managers/ChasePlaybackManager.ts
++++ b/client/src/services/player/managers/ChasePlaybackManager.ts
+@@ -0,0 +1,217 @@
++import DPlayer from 'dplayer';
++
++import PlayerManager from '@/services/player/PlayerManager';
++import Videos from '@/services/Videos';
++import usePlayerStore from '@/stores/PlayerStore';
++
++/**
++ * 追いかけ再生で録画の先端に追いついたあとも、ライブ視聴のように再生が流れ続けるようにする PlayerManager
++ * (ローカル改造)
++ *
++ * 録画中 (Recording) の録画を開いた場合のみ有効になる。やることは3つ:
++ * - 先端に追いついたら、その旨を通知する (以降は新セグメントの到着に合わせて再生が続く)
++ * - 先端でバッファ切れのまま止まったり、終了扱い (ended) になったりした場合は、先端へ戻して再生を再開する
++ * - 録画の状態を定期的に確認し、録画が完了したら通常の録画再生 (VOD) の挙動に任せる
++ * ユーザーが明示的に一時停止した場合は、そのまま尊重して自動再開しない。
++ */
++class ChasePlaybackManager implements PlayerManager {
++
++    // ユーザー操作により DPlayer 側で画質が切り替わった際、この PlayerManager の再起動が必要かどうかを示す値
++    public readonly restart_required_when_quality_switched = false;
++
++    // 先端とみなす距離 (秒)
++    private static readonly EDGE_THRESHOLD_SECONDS = 3;
++    // 先端チェックの間隔 (ミリ秒)
++    private static readonly TICK_MS = 2000;
++    // 録画状態の確認間隔 (ミリ秒)
++    private static readonly STATUS_POLL_MS = 30000;
++    // 先端でこの時間止まったら復旧を試みる (ミリ秒)
++    private static readonly STALL_RECOVER_MS = 6000;
++
++    // DPlayer のインスタンス
++    private readonly player: DPlayer;
++
++    // 再生モード (Live: ライブ視聴, Video: ビデオ視聴)
++    private readonly playback_mode: 'Live' | 'Video';
++
++    // 視聴中の録画の ID と、録画中かどうかのフラグ
++    private video_id: number | null = null;
++    private is_recording = false;
++
++    // 先端に追従中かどうか (通知を一度だけ出すため) と、先端で止まり始めた時刻
++    private is_following_edge = false;
++    private stall_since: number | null = null;
++
++    // タイマー類と ended リスナー
++    private tick_timer: ReturnType<typeof setInterval> | null = null;
++    private poll_timer: ReturnType<typeof setInterval> | null = null;
++    private on_ended: (() => void) | null = null;
++
++    constructor(player: DPlayer, playback_mode: 'Live' | 'Video') {
++        this.player = player;
++        this.playback_mode = playback_mode;
++    }
++
++
++    /**
++     * ChasePlaybackManager を初期化する
++     * 録画中の録画を開いた場合のみ、先端追従を開始する
++     */
++    public async init(): Promise<void> {
++        if (this.playback_mode !== 'Video') {
++            return;
++        }
++        const program = usePlayerStore().recorded_program;
++        if (!program || program.recorded_video.status !== 'Recording') {
++            return;
++        }
++        this.video_id = program.id;
++        this.is_recording = true;
++
++        // 先端で終了扱いになった場合に備え、ended で先端へ戻して再開する
++        this.on_ended = () => {
++            this.recoverToEdge();
++        };
++        this.player.video.addEventListener('ended', this.on_ended);
++
++        this.tick_timer = setInterval(() => {
++            this.onTick();
++        }, ChasePlaybackManager.TICK_MS);
++        this.poll_timer = setInterval(() => {
++            void this.pollRecordingStatus();
++        }, ChasePlaybackManager.STATUS_POLL_MS);
++    }
++
++
++    /**
++     * ChasePlaybackManager を破棄する
++     */
++    public async destroy(): Promise<void> {
++        if (this.tick_timer !== null) {
++            clearInterval(this.tick_timer);
++            this.tick_timer = null;
++        }
++        if (this.poll_timer !== null) {
++            clearInterval(this.poll_timer);
++            this.poll_timer = null;
++        }
++        if (this.on_ended !== null) {
++            this.player.video.removeEventListener('ended', this.on_ended);
++            this.on_ended = null;
++        }
++        this.is_recording = false;
++    }
++
++
++    /**
++     * 録画の先端 (現時点で再生可能な末尾, 秒) を返す。分からない場合は null
++     */
++    private getEdgeSeconds(): number | null {
++        const video = this.player.video;
++        if (Number.isFinite(video.duration) && video.duration > 0) {
++            return video.duration;
++        }
++        if (video.seekable.length > 0) {
++            return video.seekable.end(video.seekable.length - 1);
++        }
++        return null;
++    }
++
++
++    /**
++     * 先端チェック (2秒ごと)
++     * 先端に到達したら通知し、先端で止まったままの場合は復旧を試みる
++     */
++    private onTick(): void {
++        if (this.is_recording === false) {
++            return;
++        }
++        const video = this.player.video;
++        const edge = this.getEdgeSeconds();
++        if (edge === null) {
++            return;
++        }
++        const at_edge = (edge - video.currentTime) <= ChasePlaybackManager.EDGE_THRESHOLD_SECONDS;
++        if (at_edge === false) {
++            this.is_following_edge = false;
++            this.stall_since = null;
++            return;
++        }
++        // 先端に初めて追いついたら通知する
++        if (this.is_following_edge === false) {
++            this.is_following_edge = true;
++            this.player.notice('録画の先端に追いつきました。そのまま流れ続けます');
++        }
++        // 終了扱いになっていたら復旧する
++        if (video.ended) {
++            this.recoverToEdge();
++            return;
++        }
++        // 再生中のはずなのにバッファ切れで止まったままなら復旧を試みる
++        // (ユーザーが一時停止した場合は paused=true なので対象外)
++        if (video.paused === false && video.readyState <= 2) {
++            if (this.stall_since === null) {
++                this.stall_since = Date.now();
++            } else if (Date.now() - this.stall_since >= ChasePlaybackManager.STALL_RECOVER_MS) {
++                this.stall_since = null;
++                this.recoverToEdge();
++            }
++        } else {
++            this.stall_since = null;
++        }
++    }
++
++
++    /**
++     * 先端へ戻して再生を再開する
++     * hls.js のローダーを蹴り直し、必要なら先端付近へシークしてから play() する
++     */
++    private recoverToEdge(): void {
++        if (this.is_recording === false) {
++            return;
++        }
++        const video = this.player.video;
++        const hls = (this.player.plugins as { hls?: { startLoad?: () => void } } | undefined)?.hls;
++        if (hls && typeof hls.startLoad === 'function') {
++            try {
++                hls.startLoad();
++            } catch {
++                // ローダーの再開に失敗しても、シークと再生の再開は試みる
++            }
++        }
++        const edge = this.getEdgeSeconds();
++        if (edge !== null && (edge - video.currentTime) > 1.5) {
++            this.player.seek(Math.max(0, edge - 0.5));
++        }
++        if (video.paused || video.ended) {
++            video.play().catch(() => {
++                // 自動再生が拒否された場合は何もしない (ユーザー操作で再開できる)
++            });
++        }
++    }
++
++
++    /**
++     * 録画の状態を定期確認し、録画が完了していたら先端追従を終える
++     * (完了後はサーバー側でプレイリストが VOD 化され、通常の終了挙動になる)
++     */
++    private async pollRecordingStatus(): Promise<void> {
++        if (this.video_id === null || this.is_recording === false) {
++            return;
++        }
++        const program = await Videos.fetchVideo(this.video_id);
++        if (program !== null && program.recorded_video.status !== 'Recording') {
++            this.is_recording = false;
++            if (this.tick_timer !== null) {
++                clearInterval(this.tick_timer);
++                this.tick_timer = null;
++            }
++            if (this.poll_timer !== null) {
++                clearInterval(this.poll_timer);
++                this.poll_timer = null;
++            }
++        }
++    }
++}
++
++export default ChasePlaybackManager;
+--- a/client/src/services/player/managers/HighlightReelManager.ts
++++ b/client/src/services/player/managers/HighlightReelManager.ts
+@@ -0,0 +1,210 @@
++import DPlayer from 'dplayer';
++
++import router from '@/router';
++import { clearHighlightReel, getHighlightReel, IHighlightReel, saveHighlightReel } from '@/services/HighlightReel';
++import PlayerManager from '@/services/player/PlayerManager';
++import usePlayerStore from '@/stores/PlayerStore';
++
++/**
++ * ハイライト横断再生を制御する PlayerManager (ローカル改造)
++ *
++ * sessionStorage の再生キュー (HighlightReel) があり、開いた録画がキューの現在区間と
++ * 一致する場合に有効になる。区間の開始位置へシークし、終了位置に達したら次の区間へ進む
++ * (別の録画の場合はその視聴画面へ移動する)。キューと一致しない録画を開いた場合は、
++ * ユーザーが手動で移動したとみなしてキューを破棄する。
++ */
++class HighlightReelManager implements PlayerManager {
++
++    // ユーザー操作により DPlayer 側で画質が切り替わった際、この PlayerManager の再起動が必要かどうかを示す値
++    public readonly restart_required_when_quality_switched = false;
++
++    // DPlayer のインスタンス
++    private readonly player: DPlayer;
++
++    // 再生モード (Live: ライブ視聴, Video: ビデオ視聴)
++    private readonly playback_mode: 'Live' | 'Video';
++
++    // 再生キューと、開始シーク済みかどうか、監視タイマーとバッジ要素
++    private reel: IHighlightReel | null = null;
++    private has_seeked_to_start = false;
++    private monitor_timer: ReturnType<typeof setInterval> | null = null;
++    private badge_element: HTMLDivElement | null = null;
++
++    constructor(player: DPlayer, playback_mode: 'Live' | 'Video') {
++        this.player = player;
++        this.playback_mode = playback_mode;
++    }
++
++
++    /**
++     * HighlightReelManager を初期化する
++     * 再生キューがあり、開いた録画が現在の区間と一致する場合のみ有効になる
++     */
++    public async init(): Promise<void> {
++        if (this.playback_mode !== 'Video') {
++            return;
++        }
++        const reel = getHighlightReel();
++        if (reel === null) {
++            return;
++        }
++        const current_item = reel.items[reel.index];
++        const current_video_id = usePlayerStore().recorded_program?.id;
++        if (current_item === undefined || current_item.video_id !== current_video_id) {
++            // 別の録画を開いた = ハイライト再生を中断したとみなす
++            clearHighlightReel();
++            return;
++        }
++        this.reel = reel;
++        this.showBadge();
++        this.monitor_timer = setInterval(() => this.onTick(), 500);
++    }
++
++
++    /**
++     * HighlightReelManager を破棄する
++     * (キュー自体は次の視聴画面へ引き継ぐため、ここでは破棄しない)
++     */
++    public async destroy(): Promise<void> {
++        if (this.monitor_timer !== null) {
++            clearInterval(this.monitor_timer);
++            this.monitor_timer = null;
++        }
++        if (this.badge_element !== null) {
++            this.badge_element.remove();
++            this.badge_element = null;
++        }
++        this.reel = null;
++    }
++
++
++    /**
++     * 「ハイライト再生中 n/m」バッジをプレイヤー左上に表示する (× で中断)
++     */
++    private showBadge(): void {
++        if (this.reel === null) {
++            return;
++        }
++        const badge = document.createElement('div');
++        badge.style.cssText = 'position: absolute; left: 12px; top: 12px; z-index: 60; display: flex; align-items: center; gap: 8px;' +
++            'background: rgba(0,0,0,0.7); color: #fff; border-radius: 999px; padding: 5px 8px 5px 12px; font-size: 12px;';
++        const label = document.createElement('span');
++        label.textContent = `ハイライト再生中 ${this.reel.index + 1}/${this.reel.items.length}`;
++        badge.appendChild(label);
++        const close = document.createElement('button');
++        close.type = 'button';
++        close.textContent = '✕';
++        close.style.cssText = 'border: none; background: rgba(255,255,255,0.2); color: #fff; border-radius: 999px;' +
++            'width: 20px; height: 20px; line-height: 1; cursor: pointer; font-size: 11px;';
++        close.addEventListener('click', (event) => {
++            event.stopPropagation();
++            this.abort();
++        });
++        badge.appendChild(close);
++        this.player.container.appendChild(badge);
++        this.badge_element = badge;
++    }
++
++
++    /**
++     * 500ms ごとの監視。開始シークと、区間終了時の次の区間への進行を行う
++     */
++    private onTick(): void {
++        if (this.reel === null) {
++            return;
++        }
++        const item = this.reel.items[this.reel.index];
++        if (item === undefined) {
++            this.finish();
++            return;
++        }
++        const video = this.player.video;
++        // 再生開始直後は、区間の開始位置へシークする (プレイヤーの初期シークが落ち着いてから)
++        if (this.has_seeked_to_start === false) {
++            if (video.readyState >= 1 && Number.isFinite(video.duration) && video.duration > 0) {
++                this.has_seeked_to_start = true;
++                this.player.seek(Math.max(0, item.start));
++                if (video.paused) {
++                    video.play().catch(() => {
++                        // 自動再生が拒否された場合は何もしない
++                    });
++                }
++            }
++            return;
++        }
++        if (video.currentTime >= item.end - 0.25) {
++            this.advance();
++        }
++    }
++
++
++    /**
++     * 次の区間へ進む。最後の区間なら終了する
++     */
++    private advance(): void {
++        if (this.reel === null) {
++            return;
++        }
++        this.reel.index += 1;
++        if (this.reel.index >= this.reel.items.length) {
++            this.finish();
++            return;
++        }
++        saveHighlightReel(this.reel);
++        const next = this.reel.items[this.reel.index];
++        const current_video_id = usePlayerStore().recorded_program?.id;
++        if (next.video_id === current_video_id) {
++            // 同じ録画内の次の区間へシークする
++            this.has_seeked_to_start = true;
++            this.player.seek(Math.max(0, next.start));
++            if (this.badge_element !== null) {
++                const label = this.badge_element.querySelector('span');
++                if (label !== null) {
++                    label.textContent = `ハイライト再生中 ${this.reel.index + 1}/${this.reel.items.length}`;
++                }
++            }
++        } else {
++            // 別の録画の視聴画面へ移動する (移動先でこの Manager が再初期化され、続きを再生する)
++            void router.push({ path: `/videos/watch/${next.video_id}` });
++        }
++    }
++
++
++    /**
++     * ハイライト再生を終了する
++     */
++    private finish(): void {
++        clearHighlightReel();
++        this.player.pause();
++        this.player.notice('ハイライト再生が終了しました');
++        if (this.monitor_timer !== null) {
++            clearInterval(this.monitor_timer);
++            this.monitor_timer = null;
++        }
++        if (this.badge_element !== null) {
++            this.badge_element.remove();
++            this.badge_element = null;
++        }
++        this.reel = null;
++    }
++
++
++    /**
++     * ユーザー操作でハイライト再生を中断する
++     */
++    private abort(): void {
++        clearHighlightReel();
++        this.player.notice('ハイライト再生を終了しました');
++        if (this.monitor_timer !== null) {
++            clearInterval(this.monitor_timer);
++            this.monitor_timer = null;
++        }
++        if (this.badge_element !== null) {
++            this.badge_element.remove();
++            this.badge_element = null;
++        }
++        this.reel = null;
++    }
++}
++
++export default HighlightReelManager;
+--- a/client/src/services/player/managers/SeekControlManager.ts
++++ b/client/src/services/player/managers/SeekControlManager.ts
+@@ -8,7 +8,7 @@
+ /**
+  * ビデオ視聴時のスキップ (秒送り/秒戻し) ボタンと高速シーク、再生速度の永続化を提供する PlayerManager
+  * ローカル改造 (2026-11-13): 家庭用レコーダー風の操作系を追加するために新設
+- * - コントロールバーに [30秒戻し] [10秒戻し] [再生] [10秒送り] [30秒送り] の並びでボタンを配置する
++ * - コントロールバーに [60秒戻し] [10秒戻し] [再生] [10秒送り] [30秒送り] [60秒送り] の並びでボタンを配置する
+  *   (中央の再生ボタンの隣が 10秒戻し / 30秒送り になる初期配置)
+  * - 短押し: 設定秒数のスキップ (連続タップは 220ms 以内を合算して 1 回のシークにまとめる)
+  * - 長押し (480ms 以上): 8倍相当の高速シーク (0.25 秒ごとに 2 秒進める/戻す、音声はミュート)
+@@ -89,13 +89,14 @@
+         const backward_seconds = settings_store.settings.video_seek_backward_seconds;
+         const forward_seconds = settings_store.settings.video_seek_forward_seconds;
+ 
+-        // 再生ボタンの前に 30秒戻し / (設定秒数)戻し を挿入
+-        const back_large = this.createSkipButton(-30, '30秒戻し');
++        // 再生ボタンの前に 60秒戻し / (設定秒数)戻し を挿入
++        // (外側は固定で大きめのジャンプ用。内側の設定秒数 (初期値 30秒送り) と値が重ならないよう 60 秒にしている)
++        const back_large = this.createSkipButton(-60, '60秒戻し');
+         const back_small = this.createSkipButton(-backward_seconds, `${backward_seconds}秒戻し`);
+         play_icon.before(back_large, back_small);
+-        // 再生ボタンの後に (設定秒数)送り / 30秒送り を挿入
++        // 再生ボタンの後に (設定秒数)送り / 60秒送り を挿入
+         const forward_small = this.createSkipButton(forward_seconds, `${forward_seconds}秒送り`);
+-        const forward_large = this.createSkipButton(30, '30秒送り');
++        const forward_large = this.createSkipButton(60, '60秒送り');
+         play_icon.after(forward_small, forward_large);
+         this.buttons = [back_large, back_small, forward_small, forward_large];
+ 
+--- a/client/src/services/player/managers/SleepTimerManager.ts
++++ b/client/src/services/player/managers/SleepTimerManager.ts
+@@ -0,0 +1,176 @@
++import DPlayer from 'dplayer';
++
++import PlayerManager from '@/services/player/PlayerManager';
++import { sleep_timer_state } from '@/services/player/SleepTimerState';
++import usePlayerStore from '@/stores/PlayerStore';
++
++/**
++ * おやすみタイマー (ローカル改造)
++ *
++ * タップ/クリックのたびに オフ → 15分 → 30分 → 60分 → (録画再生時のみ) 番組の終わりで停止 → オフ
++ * と切り替える。時間が来たら再生を一時停止する。「番組の終わりで停止」は SleepTimerState 経由で
++ * AutoPlayNextManager に伝わり、次の話の自動再生を抑止する形で実現する。
++ *
++ * 操作 UI の置き場所は再生モードで異なる:
++ * - 録画再生 (Video): プレイヤーは詰め込みすぎになるため、番組情報パネルのボタンから
++ *   PlayerStore イベント (SleepTimerCycleRequest / SleepTimerStateChanged) 経由で操作する
++ * - ライブ視聴 (Live): パネル側に置き場所がないため、プレイヤーのコントロールにボタンを出す
++ */
++class SleepTimerManager implements PlayerManager {
++
++    // ユーザー操作により DPlayer 側で画質が切り替わった際、この PlayerManager の再起動が必要かどうかを示す値
++    public readonly restart_required_when_quality_switched = false;
++
++    // DPlayer のインスタンス
++    private readonly player: DPlayer;
++
++    // 再生モード (Live: ライブ視聴, Video: ビデオ視聴)
++    private readonly playback_mode: 'Live' | 'Video';
++
++    // タイマーボタン (ライブ視聴時のみ) と、選択中のモード、残り時間 (秒, null は未設定)
++    private button: HTMLButtonElement | null = null;
++    private cycle_request_handler: (() => void) | null = null;
++    private mode_index = 0;
++    private remaining_seconds: number | null = null;
++    private stop_at_end = false;
++    private ticker: ReturnType<typeof setInterval> | null = null;
++
++    constructor(player: DPlayer, playback_mode: 'Live' | 'Video') {
++        this.player = player;
++        this.playback_mode = playback_mode;
++    }
++
++
++    /**
++     * SleepTimerManager を初期化する
++     * 録画再生ではパネル側ボタンからのイベントを待ち受け、ライブ視聴ではプレイヤーにボタンを追加する
++     */
++    public async init(): Promise<void> {
++        if (this.playback_mode === 'Video') {
++            // 番組情報パネルのおやすみタイマーボタンからの切替要求を受け付ける
++            this.cycle_request_handler = () => this.cycleMode();
++            usePlayerStore().event_emitter.on('SleepTimerCycleRequest', this.cycle_request_handler);
++            this.emitState();
++        } else {
++            // 万が一すでにボタンが存在していた場合は削除する
++            for (const element of this.player.container.querySelectorAll('.konomi-sleep-timer-button')) {
++                element.remove();
++            }
++            const play_icon = this.player.container.querySelector('.dplayer-play-icon');
++            if (play_icon === null || play_icon.parentElement === null) {
++                return;
++            }
++            const button = document.createElement('button');
++            button.type = 'button';
++            button.className = 'konomi-sleep-timer-button';
++            button.style.cssText = 'margin-left: 8px; padding: 3px 9px; border-radius: 999px;' +
++                'border: 1px solid rgba(255,255,255,0.4); background: rgba(0,0,0,0.3); color: #fff;' +
++                'font-size: 11px; line-height: 1.4; cursor: pointer; white-space: nowrap;';
++            button.addEventListener('click', (event) => {
++                event.stopPropagation();
++                this.cycleMode();
++            });
++            play_icon.parentElement.appendChild(button);
++            this.button = button;
++            this.updateLabel();
++        }
++
++        this.ticker = setInterval(() => this.onTick(), 1000);
++    }
++
++
++    /**
++     * SleepTimerManager を破棄する
++     */
++    public async destroy(): Promise<void> {
++        if (this.ticker !== null) {
++            clearInterval(this.ticker);
++            this.ticker = null;
++        }
++        if (this.cycle_request_handler !== null) {
++            usePlayerStore().event_emitter.off('SleepTimerCycleRequest', this.cycle_request_handler);
++            this.cycle_request_handler = null;
++        }
++        if (this.button !== null) {
++            this.button.remove();
++            this.button = null;
++        }
++        this.remaining_seconds = null;
++        this.stop_at_end = false;
++        sleep_timer_state.stop_at_end = false;
++    }
++
++
++    /**
++     * タイマーのモードを順に切り替える
++     * オフ → 15分 → 30分 → 60分 → (録画のみ) 番組の終わりで停止 → オフ
++     */
++    private cycleMode(): void {
++        const modes = this.playback_mode === 'Video' ? ['off', '15', '30', '60', 'end'] : ['off', '15', '30', '60'];
++        this.mode_index = (this.mode_index + 1) % modes.length;
++        const mode = modes[this.mode_index];
++        this.stop_at_end = mode === 'end';
++        this.remaining_seconds = (mode === '15' || mode === '30' || mode === '60') ? parseInt(mode) * 60 : null;
++        sleep_timer_state.stop_at_end = this.stop_at_end;
++        this.updateLabel();
++        this.emitState();
++        if (this.stop_at_end) {
++            this.player.notice('おやすみタイマー: この番組の終わりで停止します');
++        } else if (this.remaining_seconds !== null) {
++            this.player.notice(`おやすみタイマー: ${mode} 分後に停止します`);
++        } else {
++            this.player.notice('おやすみタイマーをオフにしました');
++        }
++    }
++
++
++    /**
++     * 1秒ごとの処理。残り時間を減らし、0 になったら再生を停止する
++     */
++    private onTick(): void {
++        if (this.remaining_seconds === null) {
++            return;
++        }
++        this.remaining_seconds -= 1;
++        if (this.remaining_seconds <= 0) {
++            this.remaining_seconds = null;
++            this.mode_index = 0;
++            this.player.pause();
++            this.player.notice('おやすみタイマーで停止しました');
++        }
++        this.updateLabel();
++        this.emitState();
++    }
++
++
++    /**
++     * 現在の状態を番組情報パネルへ通知する (録画再生時のみ意味を持つ)
++     */
++    private emitState(): void {
++        usePlayerStore().event_emitter.emit('SleepTimerStateChanged', {
++            mode: this.stop_at_end ? 'end' : (this.remaining_seconds !== null ? 'minutes' : 'off'),
++            remaining_seconds: this.remaining_seconds,
++        });
++    }
++
++
++    /**
++     * ボタンのラベルを現在の状態に合わせて更新する
++     */
++    private updateLabel(): void {
++        if (this.button === null) {
++            return;
++        }
++        if (this.stop_at_end) {
++            this.button.textContent = '⏰ 終了時';
++        } else if (this.remaining_seconds !== null) {
++            const minutes = Math.floor(this.remaining_seconds / 60);
++            const seconds = this.remaining_seconds % 60;
++            this.button.textContent = `⏰ ${minutes}:${seconds.toString().padStart(2, '0')}`;
++        } else {
++            this.button.textContent = '⏰ オフ';
++        }
++    }
++}
++
++export default SleepTimerManager;
+--- a/client/src/services/player/managers/WatchedReportManager.ts
++++ b/client/src/services/player/managers/WatchedReportManager.ts
+@@ -0,0 +1,99 @@
++import DPlayer from 'dplayer';
++
++import PlayerManager from '@/services/player/PlayerManager';
++import Videos from '@/services/Videos';
++import usePlayerStore from '@/stores/PlayerStore';
++
++/**
++ * 視聴進捗をサーバーへ報告する PlayerManager (ローカル改造)
++ *
++ * 再生位置の変化 (PlaybackPositionChanged) を受け取り、進み具合に応じて
++ * サーバーの視聴状態 (POST /api/videos/{id}/watched) へ到達位置を報告する。
++ * 視聴状態はサーバー側で一元管理され、一覧の未視聴バッジや未視聴フィルタの
++ * 判定に全端末 (ログアウト中を含む) で使われる。端末ローカルの視聴履歴
++ * (続きから再生用) は従来通り PlayerController 側で記録される。
++ */
++class WatchedReportManager implements PlayerManager {
++
++    // ユーザー操作により DPlayer 側で画質が切り替わった際、この PlayerManager の再起動が必要かどうかを示す値
++    public readonly restart_required_when_quality_switched = false;
++
++    // DPlayer のインスタンス
++    private readonly player: DPlayer;
++
++    // 再生モード (Live: ライブ視聴, Video: ビデオ視聴)
++    private readonly playback_mode: 'Live' | 'Video';
++
++    // イベントハンドラーと、最後に報告した位置・時刻
++    private position_handler: ((event: { playback_position: number }) => void) | null = null;
++    private last_reported_position = -1;
++    private last_reported_at = 0;
++
++    constructor(player: DPlayer, playback_mode: 'Live' | 'Video') {
++        this.player = player;
++        this.playback_mode = playback_mode;
++    }
++
++
++    /**
++     * WatchedReportManager を初期化する
++     * 再生位置の変化を購読し、サーバーへ進捗を報告する
++     */
++    public async init(): Promise<void> {
++        if (this.playback_mode !== 'Video') {
++            return;
++        }
++        this.position_handler = (event) => this.onPositionChanged(event.playback_position);
++        usePlayerStore().event_emitter.on('PlaybackPositionChanged', this.position_handler);
++    }
++
++
++    /**
++     * WatchedReportManager を破棄する
++     * 最後に現在の再生位置を報告してから離脱する
++     */
++    public async destroy(): Promise<void> {
++        if (this.position_handler !== null) {
++            usePlayerStore().event_emitter.off('PlaybackPositionChanged', this.position_handler);
++            this.position_handler = null;
++        }
++        const current_time = this.player.video.currentTime;
++        if (Number.isFinite(current_time) && current_time > this.last_reported_position) {
++            this.report(current_time);
++        }
++    }
++
++
++    /**
++     * 再生位置の変化を受け取り、報告すべきタイミングでのみサーバーへ送る
++     * (10秒以上進んだ場合は最大5秒に1回、それ以外も20秒に1回は送る)
++     * @param position 現在の再生位置 (秒)
++     */
++    private onPositionChanged(position: number): void {
++        const now = Date.now();
++        const advanced = position - this.last_reported_position;
++        const elapsed = now - this.last_reported_at;
++        if ((advanced >= 10 && elapsed >= 5000) || (advanced > 0 && elapsed >= 20000)) {
++            this.report(position);
++        }
++    }
++
++
++    /**
++     * サーバーへ到達位置を報告する (失敗しても視聴の妨げにしない)
++     * @param position 到達した再生位置 (秒)
++     */
++    private report(position: number): void {
++        const video_id = usePlayerStore().recorded_program?.id;
++        if (video_id === undefined || video_id === null) {
++            return;
++        }
++        this.last_reported_position = position;
++        this.last_reported_at = Date.now();
++        Videos.reportWatched(video_id, position).catch(() => {
++            // 報告の失敗は無視する (次回の報告で再送される)
++        });
++    }
++}
++
++export default WatchedReportManager;
+--- a/client/src/stores/PlayerStore.ts
++++ b/client/src/stores/PlayerStore.ts
+@@ -63,6 +63,13 @@
+         available: boolean;  // 盛り上がり区間が存在し、ダイジェスト再生が可能か
+         active: boolean;  // ダイジェスト再生が有効か
+     }
++    // 録画再生時: UI コンポーネントからおやすみタイマーのモード切り替えを要求する (ローカル改造)
++    SleepTimerCycleRequest: Record<string, never>;
++    // 録画再生時: SleepTimerManager からおやすみタイマーの状態を UI コンポーネントへ通知する (ローカル改造)
++    SleepTimerStateChanged: {
++        mode: 'off' | 'minutes' | 'end';  // オフ / 時間指定 / 番組の終わりで停止
++        remaining_seconds: number | null;  // 時間指定の残り時間 (秒)
++    }
+ };
+ 
+ 
+--- a/client/src/stores/SettingsStore.ts
++++ b/client/src/stores/SettingsStore.ts
+@@ -87,6 +87,7 @@
+     video_seek_backward_seconds: number;
+     video_seek_forward_seconds: number;
+     video_playback_rate: number;
++    last_quality_profile_type: 'Wi-Fi' | 'Cellular' | null;
+     tv_streaming_quality: LiveStreamingQuality;
+     tv_streaming_quality_cellular: LiveStreamingQuality;
+     tv_data_saver_mode: boolean;
+@@ -246,6 +247,8 @@
+     video_seek_forward_seconds: 30,
+     // ビデオ視聴時の再生速度 (前回視聴時の速度を復元する) (Default: 1倍) (ローカル改造で追加)
+     video_playback_rate: 1,
++    // 最後に手動で切り替えた画質プロファイル (ページ移動後も引き継ぐ) (Default: null = 回線種別から自動判定) (ローカル改造で追加)
++    last_quality_profile_type: null,
+ 
+     // ***** 設定 → 画質 *****
+ 
+@@ -407,6 +410,7 @@
+     // video_seek_backward_seconds: 同期無効 (ローカル改造で追加した端末ローカル設定)
+     // video_seek_forward_seconds: 同期無効 (ローカル改造で追加した端末ローカル設定)
+     // video_playback_rate: 同期無効 (ローカル改造で追加した端末ローカル設定)
++    // last_quality_profile_type: 同期無効 (ローカル改造で追加した端末ローカル設定)
+     // tv_streaming_quality: 同期無効
+     // tv_streaming_quality_cellular: 同期無効
+     // tv_data_saver_mode: 同期無効
+--- a/client/src/utils/ProgramWatch.ts
++++ b/client/src/utils/ProgramWatch.ts
+@@ -0,0 +1,38 @@
++import { computed, onScopeDispose, ref, watch } from 'vue';
++
++import type { IChannel } from '@/services/Channels';
++import type { IProgram } from '@/services/Programs';
++
++import { dayjs } from '@/utils';
++
++/** 開始時刻は含み、終了時刻は含まない。番組 ID を視聴ルートへ流用しない。 */
++export function GetProgramWatchPath(program: Pick<IProgram, 'channel_id' | 'start_time' | 'end_time'> | null,
++    channel: Pick<IChannel, 'id' | 'display_channel_id' | 'is_watchable'> | null, now: number): string | null {
++    if (!program || !channel || !channel.is_watchable || program.channel_id !== channel.id) return null;
++    const start = dayjs(program.start_time).valueOf();
++    const end = dayjs(program.end_time).valueOf();
++    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || now < start || now >= end) return null;
++    return `/tv/watch/${encodeURIComponent(channel.display_channel_id)}`;
++}
++
++/** 開いている詳細・選択セルの境界だけを監視する。全番組への定期ポーリングは行わない。 */
++export function useProgramWatch(program: () => IProgram | null, channel: () => IChannel | null, active: () => boolean) {
++    const now = ref(dayjs().valueOf());
++    let timer: ReturnType<typeof setTimeout> | undefined;
++    const refresh = () => {
++        clearTimeout(timer);
++        now.value = dayjs().valueOf();
++        const item = program();
++        if (!active() || !item) return;
++        const nextBoundary = [dayjs(item.start_time).valueOf(), dayjs(item.end_time).valueOf()]
++            .filter(time => time > now.value).sort((a, b) => a - b)[0];
++        if (nextBoundary !== undefined) timer = setTimeout(refresh, Math.min(2147483647, nextBoundary - now.value + 10));
++    };
++    watch([program, channel, active], refresh, {immediate: true});
++    document.addEventListener('visibilitychange', refresh);
++    onScopeDispose(() => {
++        clearTimeout(timer);
++        document.removeEventListener('visibilitychange', refresh);
++    });
++    return computed(() => active() ? GetProgramWatchPath(program(), channel(), now.value) : null);
++}
+--- a/client/src/views/Videos/Programs.vue
++++ b/client/src/views/Videos/Programs.vue
+@@ -11,6 +11,22 @@
+                         { name: 'ビデオをみる', path: '/videos/' },
+                         { name: '録画番組一覧', path: '/videos/programs', disabled: true },
+                     ]" />
++                    <div v-if="userStore.user?.is_admin" class="trash-link">
++                        <RouterLink to="/videos/trash">
++                            <Icon icon="fluent:archive-24-regular" width="16px" height="16px" />
++                            <span>ゴミ箱を開く</span>
++                        </RouterLink>
++                    </div>
++                    <div class="list-actions">
++                        <button type="button" class="list-actions__chip" :class="{'list-actions__chip--active': unwatched_only}"
++                            @click="toggleUnwatchedOnly">
++                            未視聴のみ
++                        </button>
++                        <button type="button" class="list-actions__chip" @click="show_highlights = true">
++                            今日のハイライト
++                        </button>
++                    </div>
++                    <HighlightsDialog v-model:show="show_highlights" />
+                     <RecordedProgramList
+                         title="録画番組一覧"
+                         :programs="programs"
+@@ -36,6 +52,7 @@
+ import HeaderBar from '@/components/HeaderBar.vue';
+ import Navigation from '@/components/Navigation.vue';
+ import SPHeaderBar from '@/components/SPHeaderBar.vue';
++import HighlightsDialog from '@/components/Videos/HighlightsDialog.vue';
+ import RecordedProgramList from '@/components/Videos/RecordedProgramList.vue';
+ import { IRecordedProgram, SortOrder } from '@/services/Videos';
+ import Videos from '@/services/Videos';
+@@ -45,6 +62,13 @@
+ const route = useRoute();
+ const router = useRouter();
+ 
++// ユーザーストア (ゴミ箱リンクの表示判定に使う)
++const userStore = useUserStore();
++
++// 未視聴のみ表示するかどうかと、ハイライトダイアログの表示状態
++const unwatched_only = ref(false);
++const show_highlights = ref(false);
++
+ // 録画番組のリスト
+ const programs = ref<IRecordedProgram[]>([]);
+ const total_programs = ref(0);
+@@ -58,6 +82,11 @@
+ 
+ // 録画番組を取得
+ const fetchPrograms = async () => {
++    // 未視聴のみ表示中は、フィルタ済みリストを toggleUnwatchedOnly 側で管理するため再取得しない
++    if (unwatched_only.value) {
++        is_loading.value = false;
++        return;
++    }
+     const result = await Videos.fetchVideos(sort_order.value, current_page.value);
+     if (result) {
+         programs.value = result.recorded_programs;
+@@ -66,6 +95,38 @@
+     is_loading.value = false;
+ };
+ 
++// 未視聴かどうか (サーバー側で一元管理される視聴進捗で判定するため、全端末で同じ結果になる)
++// 状態不明 (watched_ratio が null) の場合は未視聴として扱う
++const isUnwatched = (program: IRecordedProgram): boolean => {
++    return program.watched_ratio === null || program.watched_ratio < 0.9;
++};
++
++// 未視聴のみ表示を切り替える (ON のときは全ページを取得して絞り込む)
++const toggleUnwatchedOnly = async () => {
++    unwatched_only.value = !unwatched_only.value;
++    is_loading.value = true;
++    if (unwatched_only.value) {
++        const collected: IRecordedProgram[] = [];
++        let page = 1;
++        let total = Number.POSITIVE_INFINITY;
++        while (collected.length < total && page <= 50) {
++            const result = await Videos.fetchVideos(sort_order.value, page);
++            if (!result) {
++                break;
++            }
++            total = result.total;
++            collected.push(...result.recorded_programs);
++            page += 1;
++        }
++        programs.value = collected.filter(isUnwatched);
++        total_programs.value = programs.value.length;
++        current_page.value = 1;
++        is_loading.value = false;
++    } else {
++        await fetchPrograms();
++    }
++};
++
+ // ページを更新
+ const updatePage = async (page: number) => {
+     current_page.value = page;
+@@ -108,7 +169,6 @@
+ // 開始時に実行
+ onMounted(async () => {
+     // 事前にログイン状態を同期（トークンがあればユーザー情報を取得）
+-    const userStore = useUserStore();
+     await userStore.fetchUser();
+ 
+     // クエリパラメータから初期値を設定
+@@ -154,4 +214,39 @@
+     }
+ }
+ 
++.trash-link {
++    display: flex;
++    justify-content: flex-end;
++    margin-bottom: 4px;
++    a {
++        display: inline-flex;
++        align-items: center;
++        gap: 6px;
++        color: inherit;
++        text-decoration: none;
++        font-size: 14px;
++        opacity: 0.85;
++    }
++}
++
++.list-actions {
++    display: flex;
++    gap: 8px;
++    margin-bottom: 10px;
++    &__chip {
++        padding: 5px 12px;
++        border-radius: 999px;
++        border: 1px solid rgba(128, 128, 128, 0.45);
++        background: transparent;
++        color: inherit;
++        font-size: 13px;
++        cursor: pointer;
++        &--active {
++            background: #e64f97;
++            border-color: #e64f97;
++            color: #fff;
++        }
++    }
++}
++
+ </style>
+--- a/client/src/views/Videos/Trash.vue
++++ b/client/src/views/Videos/Trash.vue
+@@ -0,0 +1,257 @@
++<template>
++    <div class="route-container">
++        <HeaderBar />
++        <main>
++            <Navigation />
++            <div class="recorded-programs-container-wrapper">
++                <SPHeaderBar />
++                <div class="recorded-programs-container">
++                    <Breadcrumbs :crumbs="[
++                        { name: 'ホーム', path: '/' },
++                        { name: 'ビデオをみる', path: '/videos/' },
++                        { name: 'ゴミ箱', path: '/videos/trash', disabled: true },
++                    ]" />
++                    <h1 class="trash-title">ゴミ箱</h1>
++                    <p class="trash-note">ゴミ箱に移動した録画は {{ retention_days }} 日間保持され、期間を過ぎると自動的に完全に削除されます。</p>
++                    <div v-if="is_loading" class="trash-empty">読み込み中です…</div>
++                    <div v-else-if="items.length === 0" class="trash-empty">ゴミ箱は空です</div>
++                    <div v-else class="trash-list">
++                        <div v-for="item in items" :key="item.program.id" class="trash-item">
++                            <img class="trash-item__thumbnail" loading="lazy" decoding="async"
++                                :src="`${Utils.api_base_url}/videos/${item.program.id}/thumbnail`">
++                            <div class="trash-item__info">
++                                <div class="trash-item__title">{{ item.program.title }}</div>
++                                <div class="trash-item__meta">
++                                    {{ item.program.channel?.name ?? '' }} ・ {{ formatDateTime(item.program.start_time) }} ・ {{ ProgramUtils.getProgramDuration(item.program) }}
++                                </div>
++                                <div class="trash-item__meta trash-item__meta--purge">あと {{ remainingDays(item) }} 日で完全に削除されます</div>
++                            </div>
++                            <div v-if="userStore.user?.is_admin" class="trash-item__actions">
++                                <v-btn variant="outlined" size="small" @click="restore(item)">復元する</v-btn>
++                                <v-btn color="error" variant="flat" size="small" @click="openDeleteConfirmation(item)">完全に削除</v-btn>
++                            </div>
++                        </div>
++                    </div>
++                </div>
++            </div>
++        </main>
++    </div>
++
++    <!-- 完全削除の確認ダイアログ -->
++    <v-dialog max-width="750" v-model="show_delete_confirmation">
++        <v-card v-if="delete_target !== null">
++            <v-card-title class="d-flex justify-center pt-6 font-weight-bold">本当に完全に削除しますか？</v-card-title>
++            <v-card-text class="pt-2 pb-0">
++                <div class="font-weight-bold mb-2">{{ delete_target.program.title }}</div>
++                <template v-if="delete_preview?.enabled && delete_preview.plan">
++                    <div class="mb-2">管理元: EPGStation / 録画ID: {{ delete_preview.plan.epgstation_id }}</div>
++                    <div class="mb-4">録画本体はEPGStationで削除し、KonomiTVとJellyfinの一覧も更新します。</div>
++                </template>
++                <div class="text-error-lighten-1 font-weight-bold">
++                    ゴミ箱からも消え、元に戻すことはできません。本当に完全に削除しますか？
++                </div>
++            </v-card-text>
++            <v-card-actions class="pt-4 px-6 pb-6">
++                <v-spacer></v-spacer>
++                <v-btn color="text" variant="text" @click="show_delete_confirmation = false">
++                    <Icon icon="fluent:dismiss-20-regular" width="18px" height="18px" />
++                    <span class="ml-1">キャンセル</span>
++                </v-btn>
++                <v-btn class="px-3" color="error" variant="flat" @click="deletePermanently">
++                    <Icon icon="fluent:delete-20-regular" width="18px" height="18px" />
++                    <span class="ml-1">完全に削除</span>
++                </v-btn>
++            </v-card-actions>
++        </v-card>
++    </v-dialog>
++</template>
++<script lang="ts" setup>
++
++import { onMounted, ref } from 'vue';
++
++import Breadcrumbs from '@/components/Breadcrumbs.vue';
++import HeaderBar from '@/components/HeaderBar.vue';
++import Navigation from '@/components/Navigation.vue';
++import SPHeaderBar from '@/components/SPHeaderBar.vue';
++import Message from '@/message';
++import Videos, { IRecordingDeletePreview, ITrashItem } from '@/services/Videos';
++import useUserStore from '@/stores/UserStore';
++import Utils, { ProgramUtils } from '@/utils';
++
++// ユーザーストア (管理者判定に使う)
++const userStore = useUserStore();
++
++// ゴミ箱の中身
++const items = ref<ITrashItem[]>([]);
++const retention_days = ref(30);
++const is_loading = ref(true);
++
++// 完全削除の確認ダイアログ
++const show_delete_confirmation = ref(false);
++const delete_target = ref<ITrashItem | null>(null);
++const delete_preview = ref<IRecordingDeletePreview | null>(null);
++
++// ゴミ箱の中身を取得
++const fetchTrash = async () => {
++    const result = await Videos.fetchTrashList();
++    if (result) {
++        items.value = result.items;
++        retention_days.value = result.retention_days;
++    }
++    is_loading.value = false;
++};
++
++// 完全削除までの残り日数
++const remainingDays = (item: ITrashItem): number => {
++    const millis = new Date(item.purge_at).getTime() - Date.now();
++    return Math.max(0, Math.ceil(millis / (24 * 60 * 60 * 1000)));
++};
++
++// 日時表示 (YYYY/MM/DD HH:mm)
++const formatDateTime = (iso: string): string => {
++    const date = new Date(iso);
++    const pad = (value: number) => String(value).padStart(2, '0');
++    return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
++};
++
++// 復元する
++const restore = async (item: ITrashItem) => {
++    const result = await Videos.restoreFromTrash(item.program.id);
++    if (result) {
++        items.value = items.value.filter((candidate) => candidate.program.id !== item.program.id);
++        Message.success('ゴミ箱から復元しました。');
++    }
++};
++
++// 完全削除の確認ダイアログを開く
++const openDeleteConfirmation = async (item: ITrashItem) => {
++    delete_preview.value = await Videos.fetchDeletePreview(item.program.id);
++    if (delete_preview.value === null) return;
++    delete_target.value = item;
++    show_delete_confirmation.value = true;
++};
++
++// 完全に削除する (既存の削除 API を使う。サーバー側でゴミ箱の登録も取り消される)
++const deletePermanently = async () => {
++    if (delete_target.value === null) return;
++    const target = delete_target.value;
++    show_delete_confirmation.value = false;
++    Message.info('録画ファイルの削除を開始します。完了までしばらくお待ちください。');
++    const result = await Videos.deleteVideo(target.program.id, delete_preview.value?.confirmation_token);
++    if (result === true) {
++        items.value = items.value.filter((candidate) => candidate.program.id !== target.program.id);
++        Message.success('完全に削除しました。');
++    }
++    delete_target.value = null;
++};
++
++// 開始時に実行
++onMounted(async () => {
++    await userStore.fetchUser();
++    await fetchTrash();
++});
++
++</script>
++<style lang="scss" scoped>
++
++.recorded-programs-container-wrapper {
++    display: flex;
++    flex-direction: column;
++    width: 100%;
++    min-width: 0;
++}
++
++.recorded-programs-container {
++    display: flex;
++    flex-direction: column;
++    width: 100%;
++    height: 100%;
++    padding: 20px;
++    margin: 0 auto;
++    min-width: 0;
++    max-width: 1000px;
++    @include smartphone-horizontal {
++        padding: 16px 20px !important;
++    }
++    @include smartphone-horizontal-short {
++        padding: 16px 16px !important;
++    }
++    @include smartphone-vertical {
++        padding: 16px 8px !important;
++        padding-top: 8px !important;
++    }
++}
++
++.trash-title {
++    font-size: 22px;
++    font-weight: 700;
++    margin-top: 8px;
++}
++
++.trash-note {
++    margin-top: 6px;
++    font-size: 14px;
++    opacity: 0.8;
++}
++
++.trash-empty {
++    margin-top: 40px;
++    text-align: center;
++    font-size: 15px;
++    opacity: 0.75;
++}
++
++.trash-list {
++    display: flex;
++    flex-direction: column;
++    gap: 12px;
++    margin-top: 16px;
++}
++
++.trash-item {
++    display: flex;
++    align-items: center;
++    gap: 14px;
++    padding: 10px;
++    border-radius: 8px;
++    background: rgb(var(--v-theme-surface-variant), 0.35);
++    @include smartphone-vertical {
++        flex-wrap: wrap;
++    }
++
++    &__thumbnail {
++        width: 128px;
++        aspect-ratio: 16 / 9;
++        object-fit: cover;
++        border-radius: 6px;
++        background: #000;
++        flex-shrink: 0;
++    }
++    &__info {
++        flex: 1;
++        min-width: 0;
++    }
++    &__title {
++        font-weight: 700;
++        font-size: 15px;
++        overflow: hidden;
++        text-overflow: ellipsis;
++        white-space: nowrap;
++    }
++    &__meta {
++        margin-top: 3px;
++        font-size: 12.5px;
++        opacity: 0.8;
++        &--purge {
++            color: rgb(var(--v-theme-error));
++            opacity: 1;
++        }
++    }
++    &__actions {
++        display: flex;
++        gap: 8px;
++        flex-shrink: 0;
++    }
++}
++
++</style>
+--- a/server/app/app.py
++++ b/server/app/app.py
+@@ -44,6 +44,7 @@
+     VideoStreamsRouter,
+ )
+ from app.streams.LiveStream import LiveStream
++from app.utils import RecordingTrash
+ from app.utils.edcb.EDCBTuner import EDCBTuner
+ from app.utils.FastAPITaskUtil import repeat_every
+ 
+@@ -259,6 +260,16 @@
+     await Channel.updateJikkyoStatus()
+     await Program.update(multiprocess=True)
+ 
++# ローカル改造: 1時間に1回、ゴミ箱の保持期間を過ぎた録画を完全に削除する
++@app.on_event('startup')
++@repeat_every(
++    seconds = 60 * 60,
++    wait_first = 60 * 60,
++    logger = logging.logger,
++)
++async def PurgeExpiredTrash():
++    await RecordingTrash.purgeExpired()
++
+ # 30秒に1回、ニコニコ実況関連のステータスを更新する
+ @app.on_event('startup')
+ @repeat_every(seconds=0.5 * 60, wait_first=0.5 * 60, logger=logging.logger)
+--- a/server/app/routers/RecorderRouter.py
++++ b/server/app/routers/RecorderRouter.py
+@@ -3,12 +3,14 @@
+ import asyncio
+ from typing import Annotated
+ 
+-from fastapi import APIRouter, Depends, Query
++from fastapi import APIRouter, Depends, HTTPException, Query, status
+ from pydantic import BaseModel
+ 
++from app import schemas
+ from app.models.RecordedProgram import RecordedProgram
+ from app.models.User import User
+ from app.routers.UsersRouter import GetCurrentAdminUser, GetCurrentUser
++from app.utils import RecordingTrash
+ from app.utils.RecorderDeleteSync import DeleteSyncJob, GetRecorderDeleteSync
+ 
+ 
+@@ -115,3 +117,63 @@
+     service = GetRecorderDeleteSync()
+     if service:
+         await service.client.aclose()
++
++
++# ローカル改造 (2026-11-13): 録画のゴミ箱 (削除の猶予期間)
++# 削除操作ではファイルや DB を変更せず、ゴミ箱に登録して一覧・検索から隠すだけにとどめる。
++# 完全削除は保持期間経過後の自動処理、またはゴミ箱画面からの明示的な削除 (既存の削除 API) で行う。
++
++class TrashItem(BaseModel):
++    program: schemas.RecordedProgram
++    trashed_at: str
++    purge_at: str
++
++
++class TrashList(BaseModel):
++    retention_days: int
++    items: list[TrashItem]
++
++
++@router.get('/trash', response_model=TrashList)
++async def TrashListAPI(current_user: Annotated[User, Depends(GetCurrentUser)]):
++    """ゴミ箱内の録画一覧を返す。DB から消えているエントリは掃除する。"""
++    state = RecordingTrash.entries()
++    if not state:
++        return TrashList(retention_days=RecordingTrash.RETENTION_DAYS, items=[])
++    programs = await RecordedProgram.filter(id__in=list(state.keys())).select_related('recorded_video', 'channel')
++    found_ids = {program.id for program in programs}
++    for video_id in list(state.keys()):
++        if video_id not in found_ids:
++            RecordingTrash.remove(video_id)
++            del state[video_id]
++    items = [
++        TrashItem(
++            program = schemas.RecordedProgram.model_validate(program),
++            trashed_at = state[program.id]['trashed_at'],
++            purge_at = state[program.id]['purge_at'],
++        )
++        for program in programs
++    ]
++    items.sort(key=lambda item: item.purge_at)
++    return TrashList(retention_days=RecordingTrash.RETENTION_DAYS, items=items)
++
++
++@router.post('/trash/{video_id}', status_code=status.HTTP_204_NO_CONTENT)
++async def MoveToTrashAPI(video_id: int, current_user: Annotated[User, Depends(GetCurrentAdminUser)]):
++    """録画をゴミ箱へ移動する (ファイルや DB は変更しない)。"""
++    program = await RecordedProgram.filter(id=video_id).select_related('recorded_video').first()
++    if program is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Video not found')
++    if program.recorded_video.status == 'Recording':
++        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Recording is still in progress')
++    if RecordingTrash.isTrashed(video_id):
++        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Already in trash')
++    RecordingTrash.add(video_id)
++
++
++@router.post('/trash/{video_id}/restore', status_code=status.HTTP_204_NO_CONTENT)
++async def RestoreFromTrashAPI(video_id: int, current_user: Annotated[User, Depends(GetCurrentAdminUser)]):
++    """録画をゴミ箱から復元する。"""
++    if not RecordingTrash.isTrashed(video_id):
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Not in trash')
++    RecordingTrash.remove(video_id)
+--- a/server/app/routers/VideosRouter.py
++++ b/server/app/routers/VideosRouter.py
+@@ -39,6 +39,8 @@
+     RecordingProtection,
+     RecordingProtectionUpdate,
+ )
++from app.utils import RecordingTrash
++from app.utils import WatchedState
+ 
+ 
+ # ルーター
+@@ -188,6 +190,34 @@
+         program.is_protected = states.get(program.id)
+ 
+ 
++def AttachWatchedStates(recorded_programs: list[schemas.RecordedProgram]) -> None:
++    """
++    ローカル改造: 録画番組の一覧・検索 API の応答に、サーバー側で一元管理する
++    視聴進捗 (watched_ratio = 最大到達位置 / 尺) を付与する
++    視聴状態を端末ではなくサーバーで持つため、ログアウト中やどの端末からでも
++    同じ「未視聴 / 視聴済み」判定ができる (保護状態の is_protected と同じ方式)
++    状態ファイルの読み込みに失敗しても一覧表示自体は継続できるよう、
++    例外時は watched_ratio を None (状態不明) のままにする
++
++    Args:
++        recorded_programs (list[schemas.RecordedProgram]): 応答に含める録画番組のリスト
++    """
++
++    if len(recorded_programs) == 0:
++        return
++
++    try:
++        positions = WatchedState.maxPositions()
++    except Exception as ex:
++        logging.error('[VideosRouter][AttachWatchedStates] Failed to load watched states:', exc_info=ex)
++        return
++
++    for program in recorded_programs:
++        duration = program.recorded_video.duration
++        if duration > 0:
++            program.watched_ratio = min(1.0, positions.get(program.id, 0.0) / duration)
++
++
+ def NormalizeSeriesTitle(title: str) -> str:
+     """
+     ローカル改造: タイトルからシリーズ判定用のキーを生成する
+@@ -454,6 +484,11 @@
+     ids には録画番組 ID のリストを指定できる。指定時は指定された ID の録画番組のみを返す。
+     """
+ 
++    # ローカル改造: ゴミ箱内の録画は一覧から除外する
++    trashed_ids = RecordingTrash.trashedIds()
++    if ids is not None and trashed_ids:
++        ids = [video_id for video_id in ids if video_id not in trashed_ids]
++
+     # 生 SQL クエリを構築
+     base_query = """
+         SELECT
+@@ -576,16 +611,28 @@
+             total_params = ids
+ 
+     else:
+-        # すべての録画番組を返す
+-        query = base_query.format(
+-            where_clause = '',
+-            order = 'DESC' if order == 'desc' else 'ASC'
+-        )
+-        params = [str(PAGE_SIZE), str((page - 1) * PAGE_SIZE)]
++        # すべての録画番組を返す (ゴミ箱内の録画は除外する)
++        if trashed_ids:
++            placeholders = ','.join(['?' for _ in trashed_ids])
++            query = base_query.format(
++                where_clause = f'AND rp.id NOT IN ({placeholders})',
++                order = 'DESC' if order == 'desc' else 'ASC'
++            )
++            params = [*trashed_ids, str(PAGE_SIZE), str((page - 1) * PAGE_SIZE)]
++
++            # 総数を取得
++            total_query = f'SELECT COUNT(*) as count FROM recorded_programs WHERE id NOT IN ({placeholders})'
++            total_params = list(trashed_ids)
++        else:
++            query = base_query.format(
++                where_clause = '',
++                order = 'DESC' if order == 'desc' else 'ASC'
++            )
++            params = [str(PAGE_SIZE), str((page - 1) * PAGE_SIZE)]
+ 
+-        # 総数を取得
+-        total_query = 'SELECT COUNT(*) as count FROM recorded_programs'
+-        total_params = []
++            # 総数を取得
++            total_query = 'SELECT COUNT(*) as count FROM recorded_programs'
++            total_params = []
+ 
+     try:
+         # データベースから直接クエリを実行
+@@ -608,6 +655,8 @@
+ 
+         # ローカル改造: 削除保護の状態を応答に含める (ログアウト中でも保護バッジを表示するため)
+         await AttachProtectionStates(recorded_programs)
++        # ローカル改造: サーバー側で一元管理する視聴進捗を応答に含める (ログアウト中でも未視聴判定をするため)
++        AttachWatchedStates(recorded_programs)
+ 
+         return schemas.RecordedPrograms(
+             total = total,
+@@ -684,6 +733,13 @@
+     if not keywords:  # キーワードが空の場合は全件取得と同じ挙動にする
+         return await VideosAPI(order=order, page=page)
+ 
++    # ローカル改造: ゴミ箱内の録画は検索結果からも除外する
++    trashed_ids = RecordingTrash.trashedIds()
++    if trashed_ids:
++        placeholders = ','.join(['?' for _ in trashed_ids])
++        where_clause += f' AND rp.id NOT IN ({placeholders})'
++        params.extend(trashed_ids)
++
+     # 生 SQL クエリを構築
+     base_query = """
+         SELECT
+@@ -793,6 +849,8 @@
+ 
+         # ローカル改造: 削除保護の状態を応答に含める (ログアウト中でも保護バッジを表示するため)
+         await AttachProtectionStates(recorded_programs)
++        # ローカル改造: サーバー側で一元管理する視聴進捗を応答に含める (ログアウト中でも未視聴判定をするため)
++        AttachWatchedStates(recorded_programs)
+ 
+         return schemas.RecordedPrograms(
+             total = total,
+@@ -1021,6 +1079,25 @@
+ 
+ 
+ @router.post(
++    '/{video_id}/watched',
++    summary = '録画番組視聴進捗報告 API',
++    status_code = status.HTTP_204_NO_CONTENT,
++)
++async def VideoWatchedReportAPI(
++    recorded_program: Annotated[RecordedProgram, Depends(GetRecordedProgram)],
++    report: schemas.WatchedReport,
++):
++    """
++    ローカル改造: 録画の再生進捗 (到達した再生位置) をサーバーへ報告する
++    視聴状態は端末ごとに持たずサーバーで一元管理し (市販レコーダーと同じく世帯で 1 つの状態)、
++    一覧・検索 API の watched_ratio として全端末へ返す
++    ログアウト中の端末 (テレビのブラウザなど) での再生も記録できるよう、認証は要求しない
++    """
++
++    WatchedState.report(recorded_program.id, report.position)
++
++
++@router.post(
+     '/{video_id}/reanalyze',
+     summary = '録画番組メタデータ再解析 API',
+     status_code = status.HTTP_204_NO_CONTENT,
+@@ -1160,6 +1237,8 @@
+         if not token:
+             raise HTTPException(409, 'Open the deletion confirmation dialog before deleting')
+         job = await service.delete(recorded_program.id, recorded_program.recorded_video.file_path, token)
++        # ローカル改造: ゴミ箱経由で削除された場合に備え、ゴミ箱の登録も取り消す
++        RecordingTrash.remove(recorded_program.id)
+         return Response(status_code=204, headers={'X-Recording-Sync': job.state})
+     # 録画ファイルの情報を取得
+     file_path = anyio.Path(recorded_program.recorded_video.file_path)
+@@ -1268,3 +1347,6 @@
+             status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
+             detail = f'Failed to delete recorded program: {ex!s}',
+         )
++
++    # ローカル改造: ゴミ箱経由で削除された場合に備え、ゴミ箱の登録も取り消す
++    RecordingTrash.remove(recorded_program.id)
+--- a/server/app/schemas.py
++++ b/server/app/schemas.py
+@@ -216,6 +216,8 @@
+     is_partially_recorded: bool = False
+     # ローカル改造: 削除保護の状態 (一覧・検索 API でのみ付与される。None は状態不明)
+     is_protected: bool | None = None
++    # ローカル改造: サーバー側で一元管理する視聴進捗 (最大到達位置 / 尺、0.0〜1.0。一覧・検索 API でのみ付与される。None は状態不明)
++    watched_ratio: float | None = None
+     # ローカル改造: 同じシリーズの前後の回の録画番組 ID (視聴画面の「前の話」「次の話」ボタン用、単体取得時のみ設定される)
+     next_episode_id: int | None = None
+     previous_episode_id: int | None = None
+@@ -247,6 +249,10 @@
+     total: int
+     recorded_programs: list[RecordedProgram]
+ 
++class WatchedReport(BaseModel):
++    # ローカル改造: 視聴進捗の報告リクエスト (到達した再生位置、秒)
++    position: float
++
+ # ***** シリーズ *****
+ 
+ class Series(PydanticModel):
+--- a/server/app/utils/RecordingTrash.py
++++ b/server/app/utils/RecordingTrash.py
+@@ -0,0 +1,135 @@
++"""録画のゴミ箱 (削除の猶予期間) の状態管理と、期限切れ録画の自動削除。
++
++ローカル改造 (2026-11-13): 市販レコーダーのゴミ箱相当の安全策として新設。
++削除操作ではファイルや DB は一切変更せず、ここに登録して一覧・検索から隠すだけにとどめる。
++復元は登録を取り消すだけ、完全削除は保持期間 (既定 30 日) 経過後に既存の削除経路
++(EPGStation 委譲) で実行する。状態は DATA_DIR/recording-trash.json に保存する。
++"""
++
++import json
++import logging
++import os
++from datetime import datetime, timedelta, timezone
++from pathlib import Path
++
++from app.constants import DATA_DIR
++
++
++# ゴミ箱の保持期間 (日): 環境変数 KONOMITV_TRASH_RETENTION_DAYS で変更可能 (既定: 30 日)
++def _retentionDays() -> int:
++    try:
++        days = int(os.environ.get('KONOMITV_TRASH_RETENTION_DAYS', '30'))
++        return days if days > 0 else 30
++    except ValueError:
++        return 30
++
++
++RETENTION_DAYS = _retentionDays()
++
++STATE_PATH = DATA_DIR / 'recording-trash.json'
++
++
++def _loadState() -> dict[int, dict[str, str]]:
++    """ゴミ箱の状態を読み込む。ファイルがない・壊れている場合は空として扱う。"""
++    try:
++        raw = json.loads(STATE_PATH.read_text(encoding='utf-8'))
++        return {int(video_id): entry for video_id, entry in raw.items()}
++    except FileNotFoundError:
++        return {}
++    except Exception:
++        logging.exception('[RecordingTrash] Failed to load trash state.')
++        return {}
++
++
++def _saveState(state: dict[int, dict[str, str]]) -> None:
++    """ゴミ箱の状態を保存する (一時ファイルに書いてから置き換える)。"""
++    tmp_path = STATE_PATH.with_suffix('.json.tmp')
++    tmp_path.write_text(
++        json.dumps({str(video_id): entry for video_id, entry in state.items()}, ensure_ascii=False, indent=2),
++        encoding='utf-8',
++    )
++    tmp_path.replace(STATE_PATH)
++
++
++def entries() -> dict[int, dict[str, str]]:
++    """ゴミ箱の全エントリ {video_id: {trashed_at, purge_at}} を返す。"""
++    return _loadState()
++
++
++def trashedIds() -> set[int]:
++    """ゴミ箱に入っている録画番組 ID の集合を返す (一覧・検索の除外用)。"""
++    return set(_loadState().keys())
++
++
++def isTrashed(video_id: int) -> bool:
++    return video_id in _loadState()
++
++
++def add(video_id: int) -> None:
++    """録画をゴミ箱へ登録する。"""
++    state = _loadState()
++    now = datetime.now(timezone.utc)
++    state[video_id] = {
++        'trashed_at': now.isoformat(),
++        'purge_at': (now + timedelta(days=RETENTION_DAYS)).isoformat(),
++    }
++    _saveState(state)
++
++
++def remove(video_id: int) -> None:
++    """録画のゴミ箱登録を取り消す (復元・完全削除後の後片付け)。"""
++    state = _loadState()
++    if video_id in state:
++        del state[video_id]
++        _saveState(state)
++
++
++def _postpone(video_id: int, days: int) -> None:
++    """自動削除に失敗したエントリの削除予定を先送りする (リトライ間隔の確保)。"""
++    state = _loadState()
++    if video_id in state:
++        state[video_id]['purge_at'] = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
++        _saveState(state)
++
++
++async def purgeExpired() -> None:
++    """保持期間を過ぎたゴミ箱の録画を、既存の削除経路で完全に削除する。
++
++    app.py から 1 時間ごとに呼ばれる。削除に失敗したエントリは予定を 1 日先送りして再試行する。
++    """
++    # 循環 import を避けるため、重い依存は関数内で読み込む
++    from app.models.RecordedProgram import RecordedProgram
++    from app.utils.RecorderDeleteSync import GetRecorderDeleteSync
++
++    now = datetime.now(timezone.utc)
++    for video_id, entry in list(_loadState().items()):
++        try:
++            purge_at = datetime.fromisoformat(entry['purge_at'])
++        except Exception:
++            remove(video_id)
++            continue
++        if purge_at > now:
++            continue
++
++        program = await RecordedProgram.filter(id=video_id).select_related('recorded_video').first()
++        if program is None:
++            # 既に DB から消えている (EPGStation 側で削除された等) 場合はエントリだけ片付ける
++            remove(video_id)
++            continue
++
++        try:
++            service = GetRecorderDeleteSync()
++            if service is not None:
++                plan = await service.plan(video_id, program.recorded_video.file_path)
++                token = service.sign(plan)
++                await service.delete(video_id, program.recorded_video.file_path, token)
++            else:
++                # EPGStation 委譲がない構成向けの簡易削除 (DB レコードとファイル本体)
++                file_path = Path(program.recorded_video.file_path)
++                await program.delete()
++                file_path.unlink(missing_ok=True)
++            remove(video_id)
++            logging.info(f'[RecordingTrash] Purged expired trashed video_id {video_id}.')
++        except Exception:
++            logging.exception(f'[RecordingTrash] Failed to purge trashed video_id {video_id}. Postponed by 1 day.')
++            _postpone(video_id, 1)
+--- a/server/app/utils/WatchedState.py
++++ b/server/app/utils/WatchedState.py
+@@ -0,0 +1,69 @@
++"""録画の視聴状態 (どこまで見たか) のサーバー側管理。
++
++ローカル改造 (2026-11-13): 視聴進捗を端末ごとのローカル履歴ではなくサーバーで
++一元管理し、ログアウト中やどの端末からでも同じ「未視聴 / 視聴済み」判定が
++できるようにするために新設した。市販レコーダーと同様、世帯で 1 つの状態として扱う。
++再生中のクライアントが到達した最大の再生位置を報告し (POST /api/videos/{id}/watched)、
++状態は DATA_DIR/watched-state.json に保存する。
++"""
++
++import json
++import logging
++import threading
++import time
++
++from app.constants import DATA_DIR
++
++
++STATE_PATH = DATA_DIR / 'watched-state.json'
++
++_lock = threading.Lock()
++
++
++def _loadState() -> dict[int, dict[str, float]]:
++    """視聴状態を読み込む。ファイルがない・壊れている場合は空として扱う。"""
++    try:
++        raw = json.loads(STATE_PATH.read_text(encoding='utf-8'))
++        return {int(video_id): entry for video_id, entry in raw.items()}
++    except FileNotFoundError:
++        return {}
++    except Exception:
++        logging.exception('[WatchedState] Failed to load watched state.')
++        return {}
++
++
++def _saveState(state: dict[int, dict[str, float]]) -> None:
++    """視聴状態を保存する (一時ファイルに書いてから置き換える)。"""
++    tmp_path = STATE_PATH.with_suffix('.json.tmp')
++    tmp_path.write_text(
++        json.dumps({str(video_id): entry for video_id, entry in state.items()}, ensure_ascii=False, indent=2),
++        encoding='utf-8',
++    )
++    tmp_path.replace(STATE_PATH)
++
++
++def report(video_id: int, position: float) -> None:
++    """再生位置の報告を記録する。保存済みの最大位置より進んだ場合のみ更新する。"""
++    if position < 0:
++        return
++    with _lock:
++        state = _loadState()
++        entry = state.get(video_id)
++        if entry is not None and position <= entry['max_position'] + 1.0:
++            return
++        state[video_id] = {'max_position': float(position), 'updated_at': time.time()}
++        _saveState(state)
++
++
++def maxPositions() -> dict[int, float]:
++    """全録画の最大到達再生位置 {video_id: 秒} を返す。"""
++    return {video_id: entry['max_position'] for video_id, entry in _loadState().items()}
++
++
++def forget(video_id: int) -> None:
++    """録画の視聴状態を削除する (録画自体の削除に合わせて呼ぶ想定)。"""
++    with _lock:
++        state = _loadState()
++        if video_id in state:
++            del state[video_id]
++            _saveState(state)

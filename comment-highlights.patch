@@ -1,8 +1,231 @@
-diff --git a/client/src/services/player/PlayerController.ts b/client/src/services/player/PlayerController.ts
-index 1956739..cf872f2 100644
+--- a/client/src/components/Watch/Panel/ChapterListDialog.vue
++++ b/client/src/components/Watch/Panel/ChapterListDialog.vue
+@@ -0,0 +1,119 @@
++<template>
++    <v-dialog max-width="900" transition="slide-y-transition" :model-value="show" @update:model-value="$emit('update:show', $event)">
++        <v-card class="chapter-list">
++            <v-card-title class="px-5 pt-6 pb-3 d-flex align-center font-weight-bold" style="height: 60px;">
++                <Icon icon="fluent:image-multiple-16-filled" height="24px" />
++                <span class="ml-3">場面一覧</span>
++                <v-spacer></v-spacer>
++                <div v-ripple class="d-flex align-center rounded-circle cursor-pointer px-2 py-2" @click="$emit('update:show', false)">
++                    <Icon icon="fluent:dismiss-12-filled" width="23px" height="23px" />
++                </div>
++            </v-card-title>
++            <div class="px-5 pb-6">
++                <div v-if="chapters.length === 0" class="py-6 text-center">場面サムネイルがまだ生成されていません</div>
++                <div v-else class="chapter-list__grid">
++                    <div v-for="chapter in chapters" :key="chapter.time" v-ripple class="chapter-list__item" @click="seekTo(chapter.time)">
++                        <div class="chapter-list__thumb" :style="chapter.style"></div>
++                        <div class="chapter-list__time">{{chapter.label}}</div>
++                    </div>
++                </div>
++            </div>
++        </v-card>
++    </v-dialog>
++</template>
++<script lang="ts">
++
++import { mapStores } from 'pinia';
++import { defineComponent, PropType } from 'vue';
++
++import { IRecordedProgram } from '@/services/Videos';
++import usePlayerStore from '@/stores/PlayerStore';
++import Utils from '@/utils';
++
++// ローカル改造: シークバー用タイル画像を場面サムネイルとして並べ、クリックでその場面へシークするダイアログ
++export default defineComponent({
++    name: 'ChapterListDialog',
++    props: {
++        program: {
++            type: Object as PropType<IRecordedProgram>,
++            required: true,
++        },
++        show: {
++            type: Boolean,
++            default: false,
++        },
++    },
++    emits: ['update:show'],
++    computed: {
++        ...mapStores(usePlayerStore),
++        chapters(): { time: number; label: string; style: Record<string, string> }[] {
++            const tile = this.program.recorded_video.thumbnail_info?.tile;
++            if (!tile || tile.total_tiles === 0) {
++                return [];
++            }
++            const tile_url = `${Utils.api_base_url}/videos/${this.program.id}/thumbnail/tiled`;
++            // 12 場面程度になるようタイルを間引く
++            const step = Math.max(1, Math.round(tile.total_tiles / 12));
++            const result: { time: number; label: string; style: Record<string, string> }[] = [];
++            for (let index = 0; index < tile.total_tiles; index += step) {
++                const col = index % tile.column_count;
++                const row = Math.floor(index / tile.column_count);
++                result.push({
++                    time: index * tile.interval_sec,
++                    label: formatTime(index * tile.interval_sec),
++                    style: {
++                        backgroundImage: `url("${tile_url}")`,
++                        backgroundSize: `${tile.column_count * 100}% ${tile.row_count * 100}%`,
++                        backgroundPosition: `${tile.column_count > 1 ? (col / (tile.column_count - 1)) * 100 : 0}% ${tile.row_count > 1 ? (row / (tile.row_count - 1)) * 100 : 0}%`,
++                    },
++                });
++            }
++            return result;
++        },
++    },
++    methods: {
++        seekTo(time: number): void {
++            this.playerStore.event_emitter.emit('SeekRequest', { playback_position: time });
++            this.$emit('update:show', false);
++        },
++    },
++});
++
++// 秒数を h:mm:ss / m:ss 表記にする
++function formatTime(seconds: number): string {
++    const total = Math.floor(seconds);
++    const h = Math.floor(total / 3600);
++    const m = Math.floor((total % 3600) / 60);
++    const s = total % 60;
++    const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
++    const ss = String(s).padStart(2, '0');
++    return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
++}
++
++</script>
++<style lang="scss" scoped>
++
++.chapter-list {
++    &__grid {
++        display: grid;
++        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
++        gap: 14px;
++    }
++    &__item {
++        cursor: pointer;
++    }
++    &__thumb {
++        aspect-ratio: 16 / 9;
++        background-repeat: no-repeat;
++        border-radius: 6px;
++        background-color: #000;
++    }
++    &__time {
++        margin-top: 4px;
++        font-size: 12.5px;
++        color: var(--v-theme-on-surface);
++        opacity: 0.85;
++    }
++}
++
++</style>
+--- a/client/src/components/Watch/Panel/RecordedProgram.vue
++++ b/client/src/components/Watch/Panel/RecordedProgram.vue
+@@ -61,6 +61,17 @@
+                     <Icon icon="fluent:next-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
+                     <span style="margin-left: 6px;">次の話</span>
+                 </div>
++                <div v-if="playerStore.recorded_program.recorded_video.thumbnail_info?.tile" v-ripple class="program-info__button"
++                    @click="show_chapter_list = true">
++                    <Icon icon="fluent:image-multiple-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
++                    <span style="margin-left: 6px;">場面一覧</span>
++                </div>
++                <div v-if="digest_available" v-ripple class="program-info__button"
++                    :class="{'program-info__button--digest-active': digest_active}"
++                    @click="toggleDigest">
++                    <Icon icon="fluent:fast-forward-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
++                    <span style="margin-left: 6px;">ダイジェスト再生{{digest_active ? '（ON）' : ''}}</span>
++                </div>
+             </div>
+         </section>
+         <section class="program-detail-container">
+@@ -70,6 +81,7 @@
+                 <div class="program-detail__text" v-html="Utils.URLtoLink(detail_text)"></div>
+             </div>
+         </section>
++        <ChapterListDialog :program="playerStore.recorded_program" v-model:show="show_chapter_list" />
+     </div>
+ </template>
+ <script lang="ts">
+@@ -77,6 +89,7 @@
+ import { mapStores } from 'pinia';
+ import { defineComponent } from 'vue';
+ 
++import ChapterListDialog from '@/components/Watch/Panel/ChapterListDialog.vue';
+ import Message from '@/message';
+ import usePlayerStore from '@/stores/PlayerStore';
+ import useSettingsStore from '@/stores/SettingsStore';
+@@ -84,6 +97,9 @@
+ 
+ export default defineComponent({
+     name: 'Panel-RecordedProgramTab',
++    components: {
++        ChapterListDialog,
++    },
+     data() {
+         return {
+             // ユーティリティをテンプレートで使えるように
+@@ -92,6 +108,13 @@
+ 
+             // コメント数カウント
+             comment_count: null as number | null,
++
++            // 場面一覧ダイアログの表示状態
++            show_chapter_list: false,
++
++            // ダイジェスト再生の状態 (ExcitementManager から DigestStateChanged で通知される)
++            digest_available: false,
++            digest_active: false,
+         };
+     },
+     computed: {
+@@ -110,6 +133,10 @@
+             if (program_id === null) return;
+             this.$router.push({ path: `/videos/watch/${program_id}` });
+         },
++        // ダイジェスト再生の ON/OFF をプレイヤー側 (ExcitementManager) へ依頼する
++        toggleDigest(): void {
++            this.playerStore.event_emitter.emit('DigestToggleRequest', {});
++        },
+         // マイリストの追加/削除を切り替える
+         toggleMylist(): void {
+             const program = this.playerStore.recorded_program;
+@@ -136,10 +163,16 @@
+                 this.comment_count = event.comments.length;
+             }
+         });
++        // ダイジェスト再生の状態 (区間の有無と ON/OFF) を受け取る
++        this.playerStore.event_emitter.on('DigestStateChanged', (state: {available: boolean; active: boolean}) => {
++            this.digest_available = state.available;
++            this.digest_active = state.active;
++        });
+     },
+     beforeUnmount() {
+         // CommentReceived イベントの全てのイベントハンドラーを削除
+         this.playerStore.event_emitter.off('CommentReceived');
++        this.playerStore.event_emitter.off('DigestStateChanged');
+     },
+ });
+ 
+@@ -290,6 +323,14 @@
+             &:hover {
+                 color: rgb(var(--v-theme-text));
+             }
++
++            &--digest-active {
++                color: #ffffff;
++                background: #e64f97;
++                &:hover {
++                    color: #ffffff;
++                }
++            }
+         }
+     }
+ 
 --- a/client/src/services/player/PlayerController.ts
 +++ b/client/src/services/player/PlayerController.ts
-@@ -10,6 +10,7 @@ import APIClient from '@/services/APIClient';
+@@ -10,6 +10,7 @@
  import CustomBufferController from '@/services/player/CustomBufferController';
  import CaptureManager from '@/services/player/managers/CaptureManager';
  import DocumentPiPManager from '@/services/player/managers/DocumentPiPManager';
@@ -10,7 +233,7 @@ index 1956739..cf872f2 100644
  import KeyboardShortcutManager from '@/services/player/managers/KeyboardShortcutManager';
  import LiveCommentManager from '@/services/player/managers/LiveCommentManager';
  import LiveDataBroadcastingManager from '@/services/player/managers/LiveDataBroadcastingManager';
-@@ -996,6 +997,7 @@ class PlayerController {
+@@ -996,6 +997,7 @@
                  new KeyboardShortcutManager(this.player, this.playback_mode),
                  new MediaSessionManager(this.player, this.playback_mode),
                  new SeekControlManager(this.player, this.playback_mode),
@@ -18,12 +241,9 @@ index 1956739..cf872f2 100644
              ];
          }
  
-diff --git a/client/src/services/player/managers/ExcitementManager.ts b/client/src/services/player/managers/ExcitementManager.ts
-new file mode 100644
-index 0000000..0808929
---- /dev/null
+--- a/client/src/services/player/managers/ExcitementManager.ts
 +++ b/client/src/services/player/managers/ExcitementManager.ts
-@@ -0,0 +1,359 @@
+@@ -0,0 +1,367 @@
 +import DPlayer from 'dplayer';
 +
 +import PlayerManager from '@/services/player/PlayerManager';
@@ -74,7 +294,7 @@ index 0000000..0808929
 +    // 追加した DOM 要素
 +    private strip_element: HTMLDivElement | null = null;
 +    private canvas_element: HTMLCanvasElement | null = null;
-+    private digest_button: HTMLButtonElement | null = null;
++    private digest_toggle_handler: (() => void) | null = null;
 +
 +    // ダイジェスト再生が有効かどうか
 +    private digest_enabled = false;
@@ -113,6 +333,15 @@ index 0000000..0808929
 +        };
 +        player_store.event_emitter.on('CommentReceived', this.comment_handler);
 +
++        // 番組情報パネル側のダイジェストボタンからの切り替え要求を受け付ける
++        // (プレイヤー内の小さいボタンは押しにくいため、ボタンはパネル側に置く)
++        this.digest_toggle_handler = () => {
++            if (this.segments.length > 0) {
++                this.toggleDigest();
++            }
++        };
++        player_store.event_emitter.on('DigestToggleRequest', this.digest_toggle_handler);
++
 +        // ダイジェスト再生の追跡
 +        this.timeupdate_handler = () => this.onTimeUpdate();
 +        this.player.video.addEventListener('timeupdate', this.timeupdate_handler);
@@ -129,6 +358,10 @@ index 0000000..0808929
 +            usePlayerStore().event_emitter.off('CommentReceived', this.comment_handler);
 +            this.comment_handler = null;
 +        }
++        if (this.digest_toggle_handler !== null) {
++            usePlayerStore().event_emitter.off('DigestToggleRequest', this.digest_toggle_handler);
++            this.digest_toggle_handler = null;
++        }
 +        if (this.timeupdate_handler !== null) {
 +            this.player.video.removeEventListener('timeupdate', this.timeupdate_handler);
 +            this.timeupdate_handler = null;
@@ -142,7 +375,6 @@ index 0000000..0808929
 +            this.strip_element = null;
 +        }
 +        this.canvas_element = null;
-+        this.digest_button = null;
 +        this.digest_enabled = false;
 +    }
 +
@@ -179,6 +411,19 @@ index 0000000..0808929
 +
 +        this.buildStripElement();
 +        this.drawGraph();
++        // パネル側のダイジェストボタンへ、区間の有無を通知する
++        this.emitDigestState();
++    }
++
++
++    /**
++     * ダイジェスト再生の状態 (区間の有無と ON/OFF) を番組情報パネルへ通知する
++     */
++    private emitDigestState(): void {
++        usePlayerStore().event_emitter.emit('DigestStateChanged', {
++            available: this.segments.length > 0,
++            active: this.digest_enabled,
++        });
 +    }
 +
 +
@@ -234,7 +479,7 @@ index 0000000..0808929
 +
 +
 +    /**
-+     * シークバーの上にグラフ表示用の帯 (キャンバス＋ダイジェストボタン) を挿入する
++     * シークバーの上にグラフ表示用の帯 (キャンバス) を挿入する
 +     */
 +    private buildStripElement(): void {
 +        if (this.strip_element !== null) {
@@ -249,12 +494,17 @@ index 0000000..0808929
 +        strip.setAttribute('data-balloon-nofocus', '');
 +        strip.setAttribute('data-balloon-pos', 'up');
 +        strip.setAttribute('aria-label', '実況コメントの盛り上がり');
-+        strip.style.cssText = 'position: relative; width: 100%; height: 26px; background: rgba(0,0,0,0.25); cursor: pointer;';
++        // シークバー (.dplayer-bar-wrap) は絶対配置のため、帯もその内側に絶対配置して
++        // バーの真上 (幅もバーと一致) に重ねる。静的に挿入するとコントロールのアイコン列と被る
++        strip.style.cssText = 'position: absolute; left: 0; width: 100%; bottom: calc(100% - 10px); height: 26px;' +
++            'background: rgba(0,0,0,0.25); border-radius: 4px; cursor: pointer; z-index: 30;';
 +
 +        const canvas = document.createElement('canvas');
 +        canvas.style.cssText = 'display: block; width: 100%; height: 100%;';
 +        strip.appendChild(canvas);
 +        canvas.addEventListener('click', (event) => {
++            // シークバーのクリック処理にも伝播させない (二重シーク防止)
++            event.stopPropagation();
 +            const rect = canvas.getBoundingClientRect();
 +            if (rect.width <= 0 || this.duration <= 0) {
 +                return;
@@ -264,23 +514,7 @@ index 0000000..0808929
 +            this.player.play();
 +        });
 +
-+        // 盛り上がり区間がある場合のみダイジェストボタンを表示する
-+        if (this.segments.length > 0) {
-+            const button = document.createElement('button');
-+            button.type = 'button';
-+            button.textContent = 'ダイジェスト';
-+            button.style.cssText = 'position: absolute; right: 6px; top: 50%; transform: translateY(-50%);' +
-+                'font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.65);' +
-+                'color: #fff; background: rgba(0,0,0,0.45); cursor: pointer;';
-+            button.addEventListener('click', (event) => {
-+                event.stopPropagation();
-+                this.toggleDigest();
-+            });
-+            strip.appendChild(button);
-+            this.digest_button = button;
-+        }
-+
-+        bar_wrap.parentElement.insertBefore(strip, bar_wrap);
++        bar_wrap.insertBefore(strip, bar_wrap.firstChild);
 +        this.strip_element = strip;
 +        this.canvas_element = canvas;
 +
@@ -330,10 +564,7 @@ index 0000000..0808929
 +     */
 +    private toggleDigest(): void {
 +        this.digest_enabled = !this.digest_enabled;
-+        if (this.digest_button !== null) {
-+            this.digest_button.style.background = this.digest_enabled ? '#e64f97' : 'rgba(0,0,0,0.45)';
-+            this.digest_button.style.borderColor = this.digest_enabled ? '#e64f97' : 'rgba(255,255,255,0.65)';
-+        }
++        this.emitDigestState();
 +        this.player.notice(this.digest_enabled ? 'ダイジェスト再生を開始しました' : 'ダイジェスト再生を終了しました');
 +        if (this.digest_enabled) {
 +            this.last_digest_check_ms = 0;
@@ -369,10 +600,7 @@ index 0000000..0808929
 +        if (next === undefined) {
 +            // すべての区間を再生し終えた
 +            this.digest_enabled = false;
-+            if (this.digest_button !== null) {
-+                this.digest_button.style.background = 'rgba(0,0,0,0.45)';
-+                this.digest_button.style.borderColor = 'rgba(255,255,255,0.65)';
-+            }
++            this.emitDigestState();
 +            this.player.notice('ダイジェスト再生が終了しました');
 +            return;
 +        }
@@ -383,3 +611,19 @@ index 0000000..0808929
 +
 +export default ExcitementManager;
 +
+--- a/client/src/stores/PlayerStore.ts
++++ b/client/src/stores/PlayerStore.ts
+@@ -56,6 +56,13 @@
+     SeekRequest: {
+         playback_position: number;  // シーク先の再生位置 (秒)
+     }
++    // 録画再生時: UI コンポーネントからダイジェスト再生の ON/OFF 切り替えを要求する (ローカル改造)
++    DigestToggleRequest: Record<string, never>;
++    // 録画再生時: ExcitementManager からダイジェスト再生の状態を UI コンポーネントへ通知する (ローカル改造)
++    DigestStateChanged: {
++        available: boolean;  // 盛り上がり区間が存在し、ダイジェスト再生が可能か
++        active: boolean;  // ダイジェスト再生が有効か
++    }
+ };
+ 
+ 
