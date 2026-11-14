@@ -206,7 +206,7 @@
  const { updateServiceWorker } = useRegisterSW({
 --- a/client/src/utils/TvSpatialNavigation.ts
 +++ b/client/src/utils/TvSpatialNavigation.ts
-@@ -0,0 +1,959 @@
+@@ -0,0 +1,967 @@
 +// TvSpatialNavigation.ts
 +// テレビ向け D-pad 空間ナビゲーション
 +//
@@ -473,6 +473,14 @@
 +}
 +
 +function findNext(fromRect: RectLike, dir: Direction, exclude: HTMLElement | null, pool?: HTMLElement[]): HTMLElement | null {
++    // 番組表のセルから左右へ動くときは、時間枠の上端 (開始時刻) を基準にする。
++    // 数時間の長い番組は中心が開始から大きくずれるため、中心基準だと
++    // 横へ移った先がその分だけ後の時間の番組になってしまう
++    // (時間が吸われてズレる、と感じる動きになる)
++    if (pool === undefined && exclude !== null && exclude.classList.contains('timetable-program-cell')
++        && (dir === 'left' || dir === 'right') && fromRect.height > 45) {
++        fromRect = { ...fromRect, bottom: fromRect.top + 45, height: 45 };
++    }
 +    const candidates = pool ?? getCandidates();
 +    // 縦移動では、他の候補の中に含まれる要素 (カード右上のピン留めボタン等) を候補から外す。
 +    // 次のカードの上端にあるボタンはカード本体より縦の距離が近いため、
