@@ -1,0 +1,62 @@
+--- a/client/src/components/Videos/RecordedProgramList.vue
++++ b/client/src/components/Videos/RecordedProgramList.vue
+@@ -15,6 +15,8 @@
+                 </div>
+             </h2>
+             <div class="recorded-program-list__actions" :class="{'recorded-program-list__actions--mylist': forMylist}">
++                <!-- 呼び出し側から見出し行に追加の操作 (フィルタ等) を差し込むためのスロット -->
++                <slot name="actions"></slot>
+                 <!-- 並び順はドロップダウンではなく、押すたびに切り替わるボタンにする
+                      (ドロップダウンはテレビのリモコンでは操作しづらいため) -->
+                 <button v-if="!hideSort" type="button" class="recorded-program-list__sort-button"
+--- a/client/src/views/Videos/Programs.vue
++++ b/client/src/views/Videos/Programs.vue
+@@ -17,15 +17,6 @@
+                             <span>ゴミ箱を開く</span>
+                         </RouterLink>
+                     </div>
+-                    <div class="list-actions">
+-                        <button type="button" class="list-actions__chip" :class="{'list-actions__chip--active': unwatched_only}"
+-                            @click="toggleUnwatchedOnly">
+-                            未視聴のみ
+-                        </button>
+-                        <button type="button" class="list-actions__chip" @click="show_highlights = true">
+-                            今日のハイライト
+-                        </button>
+-                    </div>
+                     <HighlightsDialog v-model:show="show_highlights" />
+                     <RecordedProgramList
+                         title="録画番組一覧"
+@@ -37,7 +28,21 @@
+                         :showBackButton="true"
+                         :showEmptyMessage="!is_loading"
+                         @update:page="updatePage"
+-                        @update:sortOrder="updateSortOrder($event as SortOrder)" />
++                        @update:sortOrder="updateSortOrder($event as SortOrder)">
++                        <!-- フィルタ類は一覧の見出し行 (並び替えと同じ行) に置く。
++                             独立した行に置くと、リモコンのフォーカスが届かなくなるため -->
++                        <template #actions>
++                            <div class="list-actions list-actions--in-header">
++                                <button type="button" class="list-actions__chip" :class="{'list-actions__chip--active': unwatched_only}"
++                                    @click="toggleUnwatchedOnly">
++                                    未視聴のみ
++                                </button>
++                                <button type="button" class="list-actions__chip" @click="show_highlights = true">
++                                    今日のハイライト
++                                </button>
++                            </div>
++                        </template>
++                    </RecordedProgramList>
+                 </div>
+             </div>
+         </main>
+@@ -233,6 +238,9 @@ onMounted(async () => {
+     display: flex;
+     gap: 8px;
+     margin-bottom: 10px;
++    &--in-header {
++        margin-bottom: 0px;
++    }
+     &__chip {
+         padding: 5px 12px;
+         border-radius: 999px;

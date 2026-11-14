@@ -1,0 +1,15 @@
+--- a/client/src/utils/TvSpatialNavigation.ts
++++ b/client/src/utils/TvSpatialNavigation.ts
+@@ -614,6 +614,12 @@ function onKeyDown(event: KeyboardEvent): void {
+         return;
+     }
+ 
++    // ダイアログやメニューが開いている間はキーをそちらへ渡し、
++    // 裏側のフォーカスを動かさない (決定で裏の項目が押されてしまうのを防ぐ)
++    if (hasOpenDialog()) {
++        return;
++    }
++
+     const playerVisible = isPlayerVisible() && !hasOpenDialog();
+ 
+     // プレイヤー表示中 (操作モード外) : 下キーか決定で、再生を止めずに
