@@ -1,3 +1,34 @@
+--- a/client/src/components/Reservations/Reservation.vue
++++ b/client/src/components/Reservations/Reservation.vue
+@@ -24,7 +24,7 @@
+                     <div class="reservation__priority-badge">{{ reservation.record_settings.priority }}</div>
+                     <div class="reservation__priority-label">優先度</div>
+                 </div>
+-                <div v-if="!shouldShowProgramSearchAddButton && !reservation.is_recording_in_progress" class="reservation__toggle" @click="handleSwitchClick">
++                <div v-if="!shouldShowProgramSearchAddButton && !reservation.is_recording_in_progress && isKeywordAutoReservation" class="reservation__toggle" @click="handleSwitchClick">
+                     <v-switch
+                         v-model="isEnabled"
+                         color="primary"
+@@ -35,6 +35,9 @@
+                     ></v-switch>
+                     <div class="reservation__toggle-label">{{ isEnabled ? '有効' : '無効' }}</div>
+                 </div>
++                <div v-else-if="!shouldShowProgramSearchAddButton && !reservation.is_recording_in_progress" class="reservation__toggle">
++                    <div class="reservation__toggle-label">有効</div>
++                </div>
+                 <div v-else-if="!shouldShowProgramSearchAddButton" class="reservation__recording">
+                     <div class="reservation__recording-icon"></div>
+                 </div>
+@@ -153,6 +156,9 @@ const emit = defineEmits<{
+     (e: 'added', reservation: IReservation): void;
+ }>();
+ 
++// キーワード自動予約で作成された予約かどうか (手動予約は無効化できないため、一覧のトグルも出さない)
++const isKeywordAutoReservation = computed(() => (props.reservation.comment ?? '').includes('EPG自動予約'));
++
+ // 有効・無効の状態を管理
+ const isEnabled = ref(props.reservation.record_settings.is_enabled);
+ const isUpdating = ref(false);
 --- a/client/src/components/Reservations/ReservationConditionsDialog.vue
 +++ b/client/src/components/Reservations/ReservationConditionsDialog.vue
 @@ -0,0 +1,189 @@
@@ -3397,7 +3428,7 @@
  </style>
 --- a/client/src/views/Videos/Trash.vue
 +++ b/client/src/views/Videos/Trash.vue
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,283 @@
 +<template>
 +    <div class="route-container">
 +        <HeaderBar />
@@ -3411,6 +3442,12 @@
 +                        { name: 'ビデオをみる', path: '/videos/programs' },
 +                        { name: 'ゴミ箱', path: '/videos/trash', disabled: true },
 +                    ]" />
++                    <div class="trash-actions">
++                        <router-link v-ripple class="trash-action" to="/videos/programs">
++                            <Icon icon="fluent:arrow-left-16-regular" width="18px" height="18px" />
++                            <span>録画一覧に戻る</span>
++                        </router-link>
++                    </div>
 +                    <h1 class="trash-title">ゴミ箱</h1>
 +                    <p class="trash-note">ゴミ箱に移動した録画は {{ retention_days }} 日間保持され、期間を過ぎると自動的に完全に削除されます。</p>
 +                    <div v-if="is_loading" class="trash-empty">読み込み中です…</div>
@@ -3468,6 +3505,7 @@
 +<script lang="ts" setup>
 +
 +import { onMounted, ref } from 'vue';
++import { Icon } from '@iconify/vue';
 +
 +import Breadcrumbs from '@/components/Breadcrumbs.vue';
 +import HeaderBar from '@/components/HeaderBar.vue';
@@ -3580,6 +3618,25 @@
 +        padding: 16px 8px !important;
 +        padding-top: 8px !important;
 +    }
++}
++
++.trash-actions {
++    display: flex;
++    margin-top: 12px;
++    margin-bottom: 4px;
++}
++
++.trash-action {
++    display: inline-flex;
++    align-items: center;
++    gap: 6px;
++    padding: 8px 14px;
++    border-radius: 9999px;
++    background: rgb(var(--v-theme-background-lighten-1));
++    cursor: pointer;
++    font-size: 14px;
++    color: inherit;
++    text-decoration: none;
 +}
 +
 +.trash-title {
