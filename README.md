@@ -35,7 +35,7 @@ for p in fix pseudo-fullscreen epgstation-integration seek-controls chase-playba
          chase-card-click-fix episode-nav chapters excitement excitement-fix \
          digest-button-panel trash chase-live-edge recorder-extras ui-adjustments \
          watched-state quality-persistence program-watch pseudo-fullscreen-layout digest-padding trash-only-deletion \
-         settings-autoload-on-login tv-spatial-navigation tv-spatial-navigation-fix tv-control-mode-fix tv-scroll-and-flat-videos tv-spatial-navigation-column tv-spatial-navigation-occlusion tv-nav-nearest-and-sidebar-start tv-nav-pin-skip-and-sidebar-return tv-nav-defer-sticky-chrome tv-focus-style-soft tv-nav-logo-and-search tv-nav-horizontal-row-overlap tv-player-menu-keys tv-player-bar-background tv-nav-initial-focus-active-link; do
+         settings-autoload-on-login tv-spatial-navigation tv-spatial-navigation-fix tv-control-mode-fix tv-scroll-and-flat-videos tv-spatial-navigation-column tv-spatial-navigation-occlusion tv-nav-nearest-and-sidebar-start tv-nav-pin-skip-and-sidebar-return tv-nav-defer-sticky-chrome tv-focus-style-soft tv-nav-logo-and-search tv-nav-horizontal-row-overlap tv-player-menu-keys tv-player-bar-background tv-nav-initial-focus-active-link sort-button; do
   git apply $p.patch
 done
 ```

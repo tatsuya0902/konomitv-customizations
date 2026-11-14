@@ -1,0 +1,141 @@
+--- a/client/src/components/Videos/RecordedProgramList.vue
++++ b/client/src/components/Videos/RecordedProgramList.vue
+@@ -15,27 +15,13 @@
+                 </div>
+             </h2>
+             <div class="recorded-program-list__actions" :class="{'recorded-program-list__actions--mylist': forMylist}">
+-                <v-select v-if="!hideSort"
+-                    v-model="sort_order"
+-                    :items="forMylist ? [
+-                        { title: '追加が新しい順', value: 'mylist_added_desc' },
+-                        { title: '追加が古い順', value: 'mylist_added_asc' },
+-                        { title: '録画が新しい順', value: 'recorded_desc' },
+-                        { title: '録画が古い順', value: 'recorded_asc' },
+-                    ] : [
+-                        { title: '新しい順', value: 'desc' },
+-                        { title: '古い順', value: 'asc' },
+-                    ]"
+-                    item-title="title"
+-                    item-value="value"
+-                    class="recorded-program-list__sort"
+-                    color="primary"
+-                    bg-color="background-lighten-1"
+-                    variant="solo"
+-                    density="comfortable"
+-                    hide-details
+-                    @update:model-value="$emit('update:sortOrder', $event)">
+-                </v-select>
++                <!-- 並び順はドロップダウンではなく、押すたびに切り替わるボタンにする
++                     (ドロップダウンはテレビのリモコンでは操作しづらいため) -->
++                <button v-if="!hideSort" type="button" class="recorded-program-list__sort-button"
++                    @click="cycleSortOrder">
++                    <span class="recorded-program-list__sort-button-text">{{currentSortTitle}}</span>
++                    <Icon icon="fluent:arrow-swap-24-regular" width="17px" height="17px" />
++                </button>
+                 <v-btn v-if="showMoreButton"
+                     variant="text"
+                     class="recorded-program-list__more"
+@@ -81,7 +67,7 @@
+ </template>
+ <script lang="ts" setup>
+ 
+-import { ref, watch } from 'vue';
++import { computed, ref, watch } from 'vue';
+ import { useRouter } from 'vue-router';
+ 
+ import RecordedProgram from '@/components/Videos/RecordedProgram.vue';
+@@ -129,7 +115,7 @@ const props = withDefaults(defineProps<{
+ });
+ 
+ // Emits
+-defineEmits<{
++const emit = defineEmits<{
+     (e: 'update:page', page: number): void;
+     (e: 'update:sortOrder', order: SortOrder | MylistSortOrder): void;
+     (e: 'more'): void;
+@@ -141,6 +127,32 @@ const current_page = ref(props.page);
+ // 並び順
+ const sort_order = ref<SortOrder | MylistSortOrder>(props.sortOrder);
+ 
++// 並び順の選択肢
++const sortItems = computed<{title: string; value: SortOrder | MylistSortOrder}[]>(() => props.forMylist ? [
++    { title: '追加が新しい順', value: 'mylist_added_desc' },
++    { title: '追加が古い順', value: 'mylist_added_asc' },
++    { title: '録画が新しい順', value: 'recorded_desc' },
++    { title: '録画が古い順', value: 'recorded_asc' },
++] : [
++    { title: '新しい順', value: 'desc' },
++    { title: '古い順', value: 'asc' },
++]);
++
++// 現在の並び順の表示名
++const currentSortTitle = computed(() => sortItems.value.find((item) => item.value === sort_order.value)?.title ?? '');
++
++// 並び順ボタンを押すたびに、次の並び順へ切り替える
++const cycleSortOrder = () => {
++    const items = sortItems.value;
++    const index = items.findIndex((item) => item.value === sort_order.value);
++    const next = items[(index + 1) % items.length];
++    if (next === undefined) {
++        return;
++    }
++    sort_order.value = next.value;
++    emit('update:sortOrder', next.value);
++};
++
+ // 内部で管理するプログラムリスト
+ const displayPrograms = ref<IRecordedProgram[]>([...props.programs]);
+ // 内部で管理する合計数
+@@ -272,31 +284,37 @@ const handleProgramDeleted = (id: number) => {
+         align-items: center;
+         flex-shrink: 0;
+         margin-left: auto;
+-        :deep(.v-field) {
+-            padding-right: 4px !important;
+-        }
+-        :deep(.v-field__input) {
+-            padding-left: 12px !important;
+-            padding-right: 0px !important;
+-        }
+ 
+-        .v-select {
++        .recorded-program-list__sort-button {
+             width: 103px;
+             margin-left: 12px;
+         }
+         &--mylist {
+-            .v-select {
++            .recorded-program-list__sort-button {
+                 width: 143px;
+             }
+         }
+     }
+ 
+-    &__sort {
+-        :deep(.v-field__input) {
+-            font-size: 14px !important;
+-            padding-top: 6px !important;
+-            padding-bottom: 6px !important;
+-            min-height: unset !important;
++    &__sort-button {
++        display: flex;
++        align-items: center;
++        justify-content: space-between;
++        gap: 6px;
++        padding: 7px 8px 7px 12px;
++        font-size: 14px;
++        font-family: inherit;
++        color: rgb(var(--v-theme-on-surface));
++        background: rgb(var(--v-theme-background-lighten-1));
++        border: none;
++        border-radius: 4px;
++        cursor: pointer;
++        flex-shrink: 0;
++
++        &-text {
++            overflow: hidden;
++            text-overflow: ellipsis;
++            white-space: nowrap;
+         }
+     }
+ 
