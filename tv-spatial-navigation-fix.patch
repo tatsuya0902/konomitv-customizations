@@ -1,0 +1,485 @@
+--- a/client/src/utils/TvSpatialNavigation.ts
++++ b/client/src/utils/TvSpatialNavigation.ts
+@@ -7,12 +7,25 @@
+ // 方針:
+ // - フォーカスは仮想フォーカス (クラス付与) で管理し、Enter で click() を発火する
+ //   → Vue 側のフォーカス管理と喧嘩しない
+-// - 動画プレイヤー表示中は無効化し、プレイヤーのキー操作 (シーク等) を優先する
++// - 通常は動画プレイヤー表示中に無効化し、プレイヤーのキー操作 (シーク等) を優先する
++// - ただしプレイヤー表示中に Enter を押すと「操作モード」に入り、
++//   プレイヤーのボタン類 (全画面・設定など) にもリングで移動して決定できる
++//   → 決定すると操作モードを抜け、キー操作はプレイヤーに戻る
+ // - フォーム入力中 (input/textarea/select/contenteditable) は素通しする
+ // - マウス操作が来たらリングを消す (通常の PC 利用では何も起きない)
++// - フォーカス中の要素が仮想スクロール等で剥がれた場合は、最後の位置から再開する
+ 
+ type Direction = 'up' | 'down' | 'left' | 'right';
+ 
++interface RectLike {
++    left: number;
++    top: number;
++    right: number;
++    bottom: number;
++    width: number;
++    height: number;
++}
++
+ const CANDIDATE_SELECTOR = [
+     'a[href]',
+     'button:not([disabled])',
+@@ -31,20 +44,78 @@ const CANDIDATE_SELECTOR = [
+ 
+ const FOCUS_CLASS = 'tv-spatial-nav-focus';
+ const ACTIVE_CLASS = 'tv-spatial-nav-active';
++const CONTROL_CLASS = 'tv-spatial-nav-control';
++const TV_FULLSCREEN_CLASS = 'tv-spatial-nav-fullscreen';
++
++// テレビ向けラッパーアプリ (UA に KonomiTV-TV を含む) でのみ有効な判定
++// 通常のブラウザでは全画面ボタンの本来の動作 (本物のフルスクリーン) を妨げない
++const isTvWrapper = typeof navigator !== 'undefined' && navigator.userAgent.includes('KonomiTV-TV');
+ 
+ let current: HTMLElement | null = null;
++let lastRect: RectLike | null = null;
+ let active = false;
++let controlMode = false;
++let tvFullscreen = false;
+ let initialized = false;
+ let lastHref = '';
++let controlGuardTimer: number | null = null;
+ 
+ const STYLE_TEXT = `
+ .${ACTIVE_CLASS} .${FOCUS_CLASS} {
+-    outline: 3px solid #ec407a !important;
+-    outline-offset: 2px;
+-    box-shadow: 0 0 0 5px rgba(236, 64, 122, 0.35) !important;
++    box-shadow: inset 0 0 0 4px #ec407a, inset 0 0 26px rgba(236, 64, 122, 0.5) !important;
++    filter: brightness(1.18) !important;
++}
++body.${CONTROL_CLASS} .dplayer-controller {
++    opacity: 1 !important;
++    visibility: visible !important;
++    transform: none !important;
++}
++body.${CONTROL_CLASS} .watch-player__dplayer.dplayer.dplayer-hide-controller .dplayer-controller {
++    opacity: 1 !important;
++    visibility: visible !important;
++    transform: none !important;
++}
++body.${CONTROL_CLASS} .dplayer-controller * {
++    visibility: visible !important;
++}
++html.${TV_FULLSCREEN_CLASS},
++html.${TV_FULLSCREEN_CLASS} body {
++    overflow: hidden !important;
++    overscroll-behavior: none;
++}
++html.${TV_FULLSCREEN_CLASS} .watch-container {
++    position: fixed !important;
++    top: 0;
++    left: 0;
++    z-index: 1000;
++    box-sizing: border-box;
++    width: 100% !important;
++    height: 100% !important;
++    min-width: 0 !important;
++    min-height: 0 !important;
++    background: #000;
++}
++html.${TV_FULLSCREEN_CLASS} .watch-container .watch-navigation,
++html.${TV_FULLSCREEN_CLASS} .watch-container .watch-panel {
++    display: none !important;
++}
++html.${TV_FULLSCREEN_CLASS} .watch-content,
++html.${TV_FULLSCREEN_CLASS} .watch-player,
++html.${TV_FULLSCREEN_CLASS} .watch-player__dplayer {
++    width: 100% !important;
++    height: 100% !important;
++    min-height: 0 !important;
++    aspect-ratio: auto !important;
++}
++html.${TV_FULLSCREEN_CLASS} .watch-content {
++    flex: 1;
+ }
+ `;
+ 
++function snapshotRect(rect: DOMRect): RectLike {
++    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
++}
++
+ function isVisible(el: HTMLElement): boolean {
+     const rect = el.getBoundingClientRect();
+     if (rect.width === 0 || rect.height === 0) {
+@@ -63,52 +134,64 @@ function getCandidates(): HTMLElement[] {
+     return Array.from(document.querySelectorAll<HTMLElement>(CANDIDATE_SELECTOR)).filter(isVisible);
+ }
+ 
+-function centerOf(rect: DOMRect): { x: number; y: number } {
++function centerOf(rect: RectLike): { x: number; y: number } {
+     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+ }
+ 
+-function findNext(from: HTMLElement | null, dir: Direction): HTMLElement | null {
+-    const candidates = getCandidates().filter((el) => el !== from);
+-    if (candidates.length === 0) {
+-        return null;
++function scoreFor(fromRect: RectLike, rect: RectLike, dir: Direction): number | null {
++    const fromCenter = centerOf(fromRect);
++    const c = centerOf(rect);
++    const dx = c.x - fromCenter.x;
++    const dy = c.y - fromCenter.y;
++    let primary: number;
++    let secondary: number;
++    switch (dir) {
++        case 'right':
++            if (dx <= 1) return null;
++            primary = dx;
++            secondary = Math.abs(dy);
++            break;
++        case 'left':
++            if (dx >= -1) return null;
++            primary = -dx;
++            secondary = Math.abs(dy);
++            break;
++        case 'down':
++            if (dy <= 1) return null;
++            primary = dy;
++            secondary = Math.abs(dx);
++            break;
++        case 'up':
++            if (dy >= -1) return null;
++            primary = -dy;
++            secondary = Math.abs(dx);
++            break;
+     }
+-    if (from === null) {
+-        return candidates[0];
++    // 主方向の距離 + 直交方向のずれ (ずれは二乗ペナルティで強めに効かせる)
++    let score = primary + (secondary * secondary) / Math.max(primary, 1) + secondary * 2;
++    // 移動方向と直交する軸で現在の要素と範囲が重なる候補 (同じ行・同じ列にある要素) を強く優先する
++    // 例: カードから左へ移動したとき、タブ行ではなく同じ高さのサイドバー項目を選ぶ
++    if (dir === 'left' || dir === 'right') {
++        if (rect.top < fromRect.bottom && rect.bottom > fromRect.top) {
++            score *= 0.25;
++        }
++    } else {
++        if (rect.left < fromRect.right && rect.right > fromRect.left) {
++            score *= 0.25;
++        }
+     }
+-    const fromCenter = centerOf(from.getBoundingClientRect());
++    return score;
++}
++
++function findNext(fromRect: RectLike, dir: Direction, exclude: HTMLElement | null, pool?: HTMLElement[]): HTMLElement | null {
+     let best: HTMLElement | null = null;
+     let bestScore = Infinity;
+-    for (const el of candidates) {
+-        const c = centerOf(el.getBoundingClientRect());
+-        const dx = c.x - fromCenter.x;
+-        const dy = c.y - fromCenter.y;
+-        let primary: number;
+-        let secondary: number;
+-        switch (dir) {
+-            case 'right':
+-                if (dx <= 1) continue;
+-                primary = dx;
+-                secondary = Math.abs(dy);
+-                break;
+-            case 'left':
+-                if (dx >= -1) continue;
+-                primary = -dx;
+-                secondary = Math.abs(dy);
+-                break;
+-            case 'down':
+-                if (dy <= 1) continue;
+-                primary = dy;
+-                secondary = Math.abs(dx);
+-                break;
+-            case 'up':
+-                if (dy >= -1) continue;
+-                primary = -dy;
+-                secondary = Math.abs(dx);
+-                break;
+-        }
+-        // 主方向の距離 + 直交方向のずれ (ずれは二乗ペナルティで強めに効かせる)
+-        const score = primary + (secondary * secondary) / Math.max(primary, 1) + secondary * 2;
+-        if (score < bestScore) {
++    for (const el of pool ?? getCandidates()) {
++        if (el === exclude) {
++            continue;
++        }
++        const score = scoreFor(fromRect, el.getBoundingClientRect(), dir);
++        if (score !== null && score < bestScore) {
+             bestScore = score;
+             best = el;
+         }
+@@ -122,14 +205,49 @@ function setFocus(el: HTMLElement | null): void {
+     }
+     current = el;
+     if (current !== null) {
++        lastRect = snapshotRect(current.getBoundingClientRect());
+         current.classList.add(FOCUS_CLASS);
+         current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
++        // スクロールで位置が変わるため、少し待ってから矩形を取り直す
++        requestAnimationFrame(() => {
++            if (current !== null && document.contains(current)) {
++                lastRect = snapshotRect(current.getBoundingClientRect());
++            }
++        });
+     }
+ }
+ 
++function pickInitialFocus(): HTMLElement | null {
++    const candidates = getCandidates();
++    if (candidates.length === 0) {
++        return null;
++    }
++    // メインコンテンツ側 (左端のナビゲーションより右) のうち、
++    // 画面の読み始め位置 (左上寄りのアンカー) に最も近い要素を選ぶ
++    // ただし上部のタブ・ヘッダー帯 (画面最上部に張り付いた要素) は初期フォーカスの対象から外す
++    const mainArea = candidates.filter((el) => el.getBoundingClientRect().left >= window.innerWidth * 0.15);
++    let pool = mainArea.length > 0 ? mainArea : candidates;
++    const belowChrome = pool.filter((el) => el.getBoundingClientRect().top >= 50);
++    if (belowChrome.length > 0) {
++        pool = belowChrome;
++    }
++    const anchor = { x: window.innerWidth * 0.35, y: window.innerHeight * 0.28 };
++    let best: HTMLElement | null = null;
++    let bestScore = Infinity;
++    for (const el of pool) {
++        const c = centerOf(el.getBoundingClientRect());
++        const score = Math.hypot(c.x - anchor.x, c.y - anchor.y);
++        if (score < bestScore) {
++            bestScore = score;
++            best = el;
++        }
++    }
++    return best;
++}
++
+ function isPlayerVisible(): boolean {
+     // KonomiTV のプレイヤー (video 要素) が実サイズで表示されている間は
+-    // 方向キーをプレイヤー側 (シーク・音量) に譲る
++    // 原則として方向キーをプレイヤー側 (シーク・音量) に譲る
+     const video = document.querySelector('video');
+     if (video === null) {
+         return false;
+@@ -138,6 +256,103 @@ function isPlayerVisible(): boolean {
+     return rect.width > 200 && rect.height > 100;
+ }
+ 
++function hasOpenDialog(): boolean {
++    return document.querySelector('.v-overlay--active, .v-dialog--active') !== null;
++}
++
++function getControlCandidates(): HTMLElement[] {
++    // 操作モード中の候補はプレイヤーのコントロールバー内の操作要素に限る
++    // (設定パネルが開いている間はその項目も候補に含める)
++    // コントロールバーが隠れている間は子要素が visibility:hidden になるため、
++    // 可視性ではなく矩形と display だけで判定する。表示自体は CONTROL_CLASS の
++    // スタイル上書きで強制する
++    const player = document.querySelector('.dplayer');
++    if (player === null) {
++        return [];
++    }
++    const scopes: Element[] = [];
++    const controller = player.querySelector('.dplayer-controller');
++    if (controller !== null) {
++        scopes.push(controller);
++    }
++    const settingBox = player.querySelector('.dplayer-setting-box.dplayer-setting-box-open');
++    if (settingBox !== null) {
++        scopes.push(settingBox);
++    }
++    if (scopes.length === 0) {
++        scopes.push(player);
++    }
++    const candidates: HTMLElement[] = [];
++    for (const scope of scopes) {
++        for (const el of scope.querySelectorAll<HTMLElement>(CANDIDATE_SELECTOR)) {
++            const rect = el.getBoundingClientRect();
++            if (rect.width === 0 || rect.height === 0) {
++                continue;
++            }
++            if (window.getComputedStyle(el).display === 'none') {
++                continue;
++            }
++            candidates.push(el);
++        }
++    }
++    return candidates;
++}
++
++function isFullscreenButton(el: HTMLElement): boolean {
++    const attrs = `${el.className} ${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('title') ?? ''} ${el.getAttribute('data-balloon') ?? ''}`;
++    return attrs.includes('dplayer-full') || attrs.includes('全画面');
++}
++
++function findFullscreenButton(candidates: HTMLElement[]): HTMLElement | null {
++    for (const el of candidates) {
++        if (isFullscreenButton(el)) {
++            return el;
++        }
++    }
++    return null;
++}
++
++function setTvFullscreen(on: boolean): void {
++    // テレビ向けラッパーでは本物のフルスクリーン (body が対象) に入っても
++    // すでに画面いっぱいに表示されているため見た目が変わらない。
++    // そのため全画面ボタンは、パネルを隠して映像だけを画面いっぱいに広げる
++    // 独自の全画面表示 (疑似フルスクリーン相当) の切り替えとして扱う
++    tvFullscreen = on;
++    document.documentElement.classList.toggle(TV_FULLSCREEN_CLASS, on);
++}
++
++function enterControlMode(): void {
++    controlMode = true;
++    active = true;
++    document.body.classList.add(ACTIVE_CLASS);
++    // コントロールバーを強制表示する (自動非表示の仕組みはイベント駆動で、
++    // タッチデバイス判定により mousemove が無視される環境があるため、
++    // イベントではなくスタイルの上書きで確実に表示させる)
++    document.body.classList.add(CONTROL_CLASS);
++    const pool = getControlCandidates();
++    const target = findFullscreenButton(pool) ?? pool[0] ?? pickInitialFocus();
++    setFocus(target);
++    // Vue の再描画などでフォーカスクラスが剥がれた場合に付け直すガード
++    if (controlGuardTimer !== null) {
++        window.clearInterval(controlGuardTimer);
++    }
++    controlGuardTimer = window.setInterval(() => {
++        if (current !== null && document.contains(current) && !current.classList.contains(FOCUS_CLASS)) {
++            current.classList.add(FOCUS_CLASS);
++        }
++    }, 500);
++}
++
++function exitControlMode(): void {
++    controlMode = false;
++    document.body.classList.remove(CONTROL_CLASS);
++    if (controlGuardTimer !== null) {
++        window.clearInterval(controlGuardTimer);
++        controlGuardTimer = null;
++    }
++    setFocus(null);
++}
++
+ function isFormField(el: EventTarget | null): boolean {
+     if (!(el instanceof HTMLElement)) {
+         return false;
+@@ -154,39 +369,95 @@ function onKeyDown(event: KeyboardEvent): void {
+         ArrowRight: 'right',
+     };
+     const dir = dirMap[event.key];
+-    if (dir === undefined && event.key !== 'Enter') {
++    if (event.key === 'Escape') {
++        // テレビ向け全画面中は Escape で全画面を抜ける
++        // 操作モード中は Escape で抜ける (伝播は止めない: プレイヤー側の
++        // 疑似フルスクリーン終了など、他の Escape ハンドラも同時に働いてよい)
++        if (tvFullscreen) {
++            setTvFullscreen(false);
++        }
++        if (controlMode) {
++            exitControlMode();
++        }
+         return;
+     }
+-    if (isPlayerVisible()) {
++    if (dir === undefined && event.key !== 'Enter') {
+         return;
+     }
+     if (isFormField(document.activeElement) || isFormField(event.target)) {
+         return;
+     }
+-    // ルート遷移していたら、剥がれた要素へのフォーカスを捨てる
++    // ルート遷移していたら状態をリセットする
+     if (location.href !== lastHref) {
+         lastHref = location.href;
+-        if (current !== null && !document.contains(current)) {
++        if (tvFullscreen) {
++            setTvFullscreen(false);
++        }
++        if (controlMode) {
++            exitControlMode();
++        }
++        if (current !== null) {
++            current.classList.remove(FOCUS_CLASS);
+             current = null;
+         }
++        lastRect = null;
++    }
++
++    const playerVisible = isPlayerVisible() && !hasOpenDialog();
++
++    // プレイヤー表示中 (操作モード外) : Enter でのみ操作モードに入り、それ以外は素通し
++    if (playerVisible && !controlMode) {
++        if (event.key === 'Enter') {
++            event.preventDefault();
++            event.stopPropagation();
++            enterControlMode();
++        }
++        return;
+     }
+ 
+     if (dir !== undefined) {
+         if (!active) {
+             active = true;
+             document.body.classList.add(ACTIVE_CLASS);
++            setFocus(pickInitialFocus());
++            if (current !== null) {
++                event.preventDefault();
++                event.stopPropagation();
++            }
++            return;
++        }
++        event.preventDefault();
++        event.stopPropagation();
++        // フォーカス中の要素が剥がれていたら、最後の矩形から移動を再開する
++        const fromRect = current !== null && document.contains(current)
++            ? snapshotRect(current.getBoundingClientRect())
++            : lastRect;
++        if (fromRect === null) {
++            setFocus(controlMode ? (getControlCandidates()[0] ?? null) : pickInitialFocus());
++            return;
+         }
+-        const from = current !== null && document.contains(current) ? current : null;
+-        const next = findNext(from, dir);
++        const next = findNext(
++            fromRect, dir,
++            current !== null && document.contains(current) ? current : null,
++            controlMode ? getControlCandidates() : undefined,
++        );
+         if (next !== null) {
+-            event.preventDefault();
+-            event.stopPropagation();
+             setFocus(next);
+         }
+     } else if (event.key === 'Enter' && active && current !== null && document.contains(current)) {
+         event.preventDefault();
+         event.stopPropagation();
+-        current.click();
++        const target = current;
++        const wasControlMode = controlMode;
++        if (controlMode) {
++            exitControlMode();
++        }
++        // テレビ向けラッパーでは、全画面ボタンは独自全画面の切り替えとして扱う
++        if (wasControlMode && isTvWrapper && isFullscreenButton(target)) {
++            setTvFullscreen(!tvFullscreen);
++            return;
++        }
++        target.click();
+     }
+ }
+ 
+@@ -203,6 +474,9 @@ export function installTvSpatialNavigation(): void {
+     document.addEventListener('mousedown', () => {
+         if (active) {
+             active = false;
++            if (controlMode) {
++                exitControlMode();
++            }
+             document.body.classList.remove(ACTIVE_CLASS);
+             setFocus(null);
+         }
