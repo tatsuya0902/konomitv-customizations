@@ -206,7 +206,7 @@
  const { updateServiceWorker } = useRegisterSW({
 --- a/client/src/utils/TvSpatialNavigation.ts
 +++ b/client/src/utils/TvSpatialNavigation.ts
-@@ -0,0 +1,970 @@
+@@ -0,0 +1,1017 @@
 +// TvSpatialNavigation.ts
 +// テレビ向け D-pad 空間ナビゲーション
 +//
@@ -477,9 +477,23 @@
 +    // 数時間の長い番組は中心が開始から大きくずれるため、中心基準だと
 +    // 横へ移った先がその分だけ後の時間の番組になってしまう
 +    // (時間が吸われてズレる、と感じる動きになる)
++    // スコア計算用の矩形。通常は fromRect そのまま。番組表のセルからの
++    // 左右移動では、時間枠の上端 (開始時刻) 付近の細い帯を基準にする
++    let scoreRect = fromRect;
 +    if (pool === undefined && exclude !== null && exclude.classList.contains('timetable-program-cell')
 +        && (dir === 'left' || dir === 'right') && fromRect.height > 45) {
-+        fromRect = { ...fromRect, bottom: fromRect.top + 45, height: 45 };
++        let top = fromRect.top;
++        // 前日から続く長い番組は時間枠が表の開始より上から始まっており、
++        // その上端を基準にすると見ている時間帯と大きくずれてしまう。
++        // 基準は「今見えている範囲の上端」までに切り詰める
++        const area = exclude.closest('.timetable-grid__scroll-area');
++        if (area !== null) {
++            const header = area.querySelector('.timetable-channel-header');
++            const visibleTop = area.getBoundingClientRect().top
++                + (header !== null ? header.getBoundingClientRect().height : 0);
++            top = Math.max(top, visibleTop);
++        }
++        scoreRect = { ...fromRect, top, bottom: top + 45, height: 45 };
 +    }
 +    const candidates = pool ?? getCandidates();
 +    // 縦移動では、他の候補の中に含まれる要素 (カード右上のピン留めボタン等) を候補から外す。
@@ -572,7 +586,7 @@
 +            if (pool === undefined && (dir === 'up' || dir === 'down') && (rect.left >= fromRect.right || rect.right <= fromRect.left)) {
 +                continue;
 +            }
-+            const score = scoreFor(fromRect, rect, dir);
++            const score = scoreFor(scoreRect, rect, dir);
 +            if (score !== null && score < bestScore) {
 +                bestScore = score;
 +                best = el;
@@ -615,9 +629,42 @@
 +            }
 +        }
 +        if (dy === 0) {
-+            return;
++            break;
 +        }
 +        window.scrollBy(0, dy);
++    }
++    // 番組表は入れ子のスクロール領域で、上端のチャンネル見出し行と
++    // 左端のレールが sticky に重なる。scrollIntoView はそれを考慮しない
++    // ため、端のセルが半分隠れてしまうことがあるので、領域側をずらす
++    const area = el.closest('.timetable-grid__scroll-area');
++    if (area !== null) {
++        for (let i = 0; i < 3; i++) {
++            const rect = el.getBoundingClientRect();
++            let moved = false;
++            const cx = Math.min(Math.max(rect.left + rect.width / 2, 4), window.innerWidth - 4);
++            const topCover = document.elementFromPoint(cx, Math.min(Math.max(rect.top + 4, 4), window.innerHeight - 4));
++            if (topCover !== null && topCover !== el && !el.contains(topCover) && area.contains(topCover)) {
++                const coverRect = topCover.getBoundingClientRect();
++                if (coverRect.top <= rect.top + 4 && coverRect.bottom > rect.top) {
++                    area.scrollTop += rect.top - coverRect.bottom - 2;
++                    moved = true;
++                }
++            }
++            if (!moved) {
++                const cy = Math.min(Math.max(rect.top + rect.height / 2, 4), window.innerHeight - 4);
++                const leftCover = document.elementFromPoint(Math.min(Math.max(rect.left + 4, 4), window.innerWidth - 4), cy);
++                if (leftCover !== null && leftCover !== el && !el.contains(leftCover) && area.contains(leftCover)) {
++                    const coverRect = leftCover.getBoundingClientRect();
++                    if (coverRect.left <= rect.left + 4 && coverRect.right > rect.left) {
++                        area.scrollLeft += rect.left - coverRect.right - 2;
++                        moved = true;
++                    }
++                }
++            }
++            if (!moved) {
++                return;
++            }
++        }
 +    }
 +}
 +
