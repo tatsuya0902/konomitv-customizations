@@ -1,0 +1,19 @@
+--- a/client/src/utils/TvSpatialNavigation.ts
++++ b/client/src/utils/TvSpatialNavigation.ts
+@@ -215,7 +215,15 @@ function findNext(fromRect: RectLike, dir: Direction, exclude: HTMLElement | nul
+         if (el === exclude) {
+             continue;
+         }
+-        const score = scoreFor(fromRect, el.getBoundingClientRect(), dir);
++        const rect = el.getBoundingClientRect();
++        // 縦移動では、現在の要素と横方向の範囲が重なる候補だけを対象にする
++        // (右側の一覧を最後までスクロールしたときに、画面下部にある
++        //  左サイドバーの項目へフォーカスが飛ばないように。
++        //  サイドバーへは左キーで移る。操作モードなど専用プールには適用しない)
++        if (pool === undefined && (dir === 'up' || dir === 'down') && (rect.left >= fromRect.right || rect.right <= fromRect.left)) {
++            continue;
++        }
++        const score = scoreFor(fromRect, rect, dir);
+         if (score !== null && score < bestScore) {
+             bestScore = score;
+             best = el;
