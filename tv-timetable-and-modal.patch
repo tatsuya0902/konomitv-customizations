@@ -1,0 +1,220 @@
+--- a/client/src/utils/TvSpatialNavigation.ts
++++ b/client/src/utils/TvSpatialNavigation.ts
+@@ -17,6 +17,9 @@
+ // - フォーム入力中 (input/textarea/select/contenteditable) は素通しする
+ // - マウス操作が来たらリングを消す (通常の PC 利用では何も起きない)
+ // - フォーカス中の要素が仮想スクロール等で剥がれた場合は、最後の位置から再開する
++// - モーダル (ダイアログ・番組詳細ドロワー) が開いている間は、その中だけで移動する
++// - 番組表のセルも候補に含める。セルはフォーカスが移った時点で選択 (展開)
++//   状態になり、決定でセル内のアクションボタン (番組詳細・視聴・録画予約) へ入る
+ 
+ type Direction = 'up' | 'down' | 'left' | 'right';
+ 
+@@ -44,7 +47,12 @@ const CANDIDATE_SELECTOR = [
+     // KonomiTV 固有のクリック要素 (チャンネルのピン留めボタンや検索ボタン等、div で実装されているもの)
+     '.channel__broadcaster-pin',
+     '.search-button',
+-].join(',');
++    '.timetable-program-cell',
++].join(', ');
++
++// モーダル内でのみ候補に加える要素 (番組詳細ドロワーのタブや閉じるボタンなど、
++// div で実装されたクリック要素)
++const MODAL_EXTRA_SELECTOR = '.reservation-detail-drawer__tab, .reservation-detail-drawer__close';
+ 
+ // 操作モード専用の候補セレクタ:
+ // プレイヤーのアイコン類には div で実装されたもの (最初から再生・キャプチャ等) や
+@@ -71,7 +79,19 @@ let controlMode = false;
+ let tvFullscreen = false;
+ let initialized = false;
+ let lastHref = '';
+-let controlGuardTimer: number | null = null;
++let focusGuardTimer: number | null = null;
++
++// Vue の再描画などでフォーカスクラスが剥がれた場合に付け直すガード
++function ensureFocusGuard(): void {
++    if (focusGuardTimer !== null) {
++        return;
++    }
++    focusGuardTimer = window.setInterval(() => {
++        if (current !== null && document.contains(current) && !current.classList.contains(FOCUS_CLASS)) {
++            current.classList.add(FOCUS_CLASS);
++        }
++    }, 500);
++}
+ 
+ const STYLE_TEXT = `
+ .${ACTIVE_CLASS} .${FOCUS_CLASS} {
+@@ -265,7 +285,18 @@ function findNext(fromRect: RectLike, dir: Direction, exclude: HTMLElement | nul
+             if (el === exclude) {
+                 continue;
+             }
+-            if (excludeContained && candidates.some((other) => other !== el && other.contains(el))) {
++            // 番組表のセルから方向キーで動くときは、セル内のアクションボタンを
++            // 候補から外す (短い番組ではボタンがセルの下にはみ出して並ぶため、
++            // そのままでは左右への移動でもボタンに吸われてしまう)。
++            // ボタンへは決定キーで入る
++            if (pool === undefined && exclude !== null
++                && exclude.classList.contains('timetable-program-cell') && exclude.contains(el)) {
++                continue;
++            }
++            // ただし、現在の要素と同じコンテナに含まれる要素同士 (番組表の展開セル内の
++            // アクションボタンの並び等) は外さない: 同じセルの中は縦にも移動できる
++            if (excludeContained && candidates.some((other) => other !== el && other.contains(el)
++                && !(exclude !== null && other.contains(exclude)))) {
+                 continue;
+             }
+             if (deferChrome && pass === 0 && isChrome(el)) {
+@@ -328,11 +359,20 @@ function adjustScrollForOcclusion(el: HTMLElement): void {
+ }
+ 
+ function setFocus(el: HTMLElement | null): void {
++    // 番組表のセルは、フォーカスが移った時点で選択 (展開) 状態にする。
++    // マウスではクリックで選択が付いて回るが、リモコンではフォーカス
++    // そのものが選択になる方が自然 (移動した先に選択が残り続けない)。
++    // 選択済みのセルはクリックすると選択解除 (トグル) になるため触らない
++    if (el !== null && el.classList.contains('timetable-program-cell')
++        && !el.classList.contains('timetable-program-cell--selected')) {
++        el.click();
++    }
+     if (current !== null) {
+         current.classList.remove(FOCUS_CLASS);
+     }
+     current = el;
+     if (current !== null) {
++        ensureFocusGuard();
+         lastRect = snapshotRect(current.getBoundingClientRect());
+         current.classList.add(FOCUS_CLASS);
+         current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+@@ -397,6 +437,49 @@ function hasOpenDialog(): boolean {
+     return document.querySelector('.v-overlay--active, .v-dialog--active') !== null;
+ }
+ 
++// 開いているモーダル (ダイアログ or 番組詳細ドロワー) の中身の要素を返す。
++// メニュー (v-menu) は対象外: メニューには独自のキーボード操作があるため素通しする
++function getActiveModal(): HTMLElement | null {
++    // 手前にあるものから優先する: ダイアログ (ドロワーの上に開く確認等) → ドロワー
++    const overlays = document.querySelectorAll('.v-overlay--active');
++    for (let i = overlays.length - 1; i >= 0; i--) {
++        const overlay = overlays[i] as HTMLElement;
++        if (overlay.classList.contains('v-menu')) {
++            continue;
++        }
++        const content = overlay.querySelector<HTMLElement>('.v-overlay__content');
++        if (content !== null) {
++            return content;
++        }
++    }
++    const drawer = document.querySelector<HTMLElement>('.reservation-detail-drawer--visible');
++    if (drawer !== null) {
++        return drawer;
++    }
++    return null;
++}
++
++// モーダル内の候補一覧 (通常の候補 + モーダル専用の div クリック要素)
++function getModalCandidates(modal: HTMLElement): HTMLElement[] {
++    const pool = getCandidates().filter((el) => modal.contains(el));
++    for (const el of Array.from(modal.querySelectorAll<HTMLElement>(MODAL_EXTRA_SELECTOR))) {
++        if (isVisible(el) && !pool.includes(el)) {
++            pool.push(el);
++        }
++    }
++    return pool;
++}
++
++// 読み順 (上→下、左→右) で先頭の要素
++function firstInReadingOrder(elements: HTMLElement[]): HTMLElement | null {
++    const sorted = [...elements].sort((a, b) => {
++        const ra = a.getBoundingClientRect();
++        const rb = b.getBoundingClientRect();
++        return (ra.top - rb.top) || (ra.left - rb.left);
++    });
++    return sorted[0] ?? null;
++}
++
+ function getControlCandidates(): HTMLElement[] {
+     // 操作モード中の候補はプレイヤーのコントロールバー内の操作要素に限る
+     // (設定パネルが開いている間はその項目も候補に含める)
+@@ -526,24 +609,11 @@ function enterControlMode(): void {
+     // 初期フォーカスは再生ボタン: 決定をもう一度押せば一時停止/再生できる
+     const target = findPlayButton(pool) ?? findFullscreenButton(pool) ?? pool[0] ?? pickInitialFocus();
+     setFocus(target);
+-    // Vue の再描画などでフォーカスクラスが剥がれた場合に付け直すガード
+-    if (controlGuardTimer !== null) {
+-        window.clearInterval(controlGuardTimer);
+-    }
+-    controlGuardTimer = window.setInterval(() => {
+-        if (current !== null && document.contains(current) && !current.classList.contains(FOCUS_CLASS)) {
+-            current.classList.add(FOCUS_CLASS);
+-        }
+-    }, 500);
+ }
+ 
+ function exitControlMode(): void {
+     controlMode = false;
+     document.body.classList.remove(CONTROL_CLASS);
+-    if (controlGuardTimer !== null) {
+-        window.clearInterval(controlGuardTimer);
+-        controlGuardTimer = null;
+-    }
+     setFocus(null);
+ }
+ 
+@@ -614,9 +684,35 @@ function onKeyDown(event: KeyboardEvent): void {
+         return;
+     }
+ 
+-    // ダイアログやメニューが開いている間はキーをそちらへ渡し、
+-    // 裏側のフォーカスを動かさない (決定で裏の項目が押されてしまうのを防ぐ)
+-    if (hasOpenDialog()) {
++    // モーダル (ダイアログ・番組詳細ドロワー) が開いている間は、その中だけで
++    // 移動する。中に候補が無いモーダルやメニューはキーを素通しし、
++    // 裏側のフォーカスは動かさない (決定で裏の項目が押されるのを防ぐ)
++    const modal = getActiveModal();
++    if (modal !== null || hasOpenDialog()) {
++        if (modal === null) {
++            return;
++        }
++        const pool = getModalCandidates(modal);
++        if (pool.length === 0) {
++            return;
++        }
++        event.preventDefault();
++        event.stopPropagation();
++        if (current === null || !modal.contains(current)) {
++            const first = firstInReadingOrder(pool);
++            if (first !== null) {
++                setFocus(first);
++            }
++            return;
++        }
++        if (dir !== undefined) {
++            const next = findNext(snapshotRect(current.getBoundingClientRect()), dir, current, pool);
++            if (next !== null) {
++                setFocus(next);
++            }
++        } else if (event.key === 'Enter') {
++            current.click();
++        }
+         return;
+     }
+ 
+@@ -742,6 +838,17 @@ function onKeyDown(event: KeyboardEvent): void {
+             exitControlMode();
+             return;
+         }
++        // 番組表のセルはフォーカスの時点で選択 (展開) 済みなので、決定では
++        // クリック (選択解除になってしまう) ではなく、セル内の
++        // アクションボタン (番組詳細・視聴・録画予約) へ入る
++        if (target.classList.contains('timetable-program-cell')) {
++            const inside = getCandidates().filter((el) => el !== target && target.contains(el));
++            const first = firstInReadingOrder(inside);
++            if (first !== null) {
++                setFocus(first);
++                return;
++            }
++        }
+         target.click();
+     }
+ }
