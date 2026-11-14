@@ -21,6 +21,7 @@
 | 画質プロファイル・画質の保持 | モバイル回線向けプロファイルのトグルと手動で選んだ画質を、ページ遷移や別の録画でも引き継ぐ | [報告](ADDITIONAL-FEATURES.md)／[パッチ](quality-persistence.patch) |
 | 視聴状態のサーバー一元化・未視聴バッジ | 再生の最大到達位置をサーバー側で保持して世帯で共有し、一覧カードに未視聴バッジを表示。端末やログイン状態によらず同じ判定になる | [報告](ADDITIONAL-FEATURES.md)／[パッチ](watched-state.patch) |
 | ログイン時の設定の自動取り込み | 未同期の端末でログインしたとき、サーバーに保存済みの設定があれば自動で反映し、デバイス間同期を有効化する | [報告](ADDITIONAL-FEATURES.md)／[パッチ](settings-autoload-on-login.patch) |
+| テレビ向け D-pad 空間ナビゲーション | リモコンの方向キーで項目間を移動し、決定で開く。動画プレイヤー表示中は無効化され、キーはシーク等の操作に使われる | [報告](ADDITIONAL-FEATURES.md)／[パッチ](tv-spatial-navigation.patch) |
 
 改造の経緯や詳細な仕様は [LOCAL-CUSTOMIZATIONS.md](LOCAL-CUSTOMIZATIONS.md) にまとめています。周辺ソフトウェア（EPGStation、Mirakurun、pix-userland）を含めた索引は [CUSTOM-FEATURES.md](CUSTOM-FEATURES.md) を参照してください。
 
@@ -33,7 +34,7 @@ for p in fix pseudo-fullscreen epgstation-integration seek-controls chase-playba
          chase-card-click-fix episode-nav chapters excitement excitement-fix \
          digest-button-panel trash chase-live-edge recorder-extras ui-adjustments \
          watched-state quality-persistence program-watch pseudo-fullscreen-layout digest-padding trash-only-deletion \
-         settings-autoload-on-login; do
+         settings-autoload-on-login tv-spatial-navigation; do
   git apply $p.patch
 done
 ```

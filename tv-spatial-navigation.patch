@@ -1,0 +1,233 @@
+--- a/client/src/main.ts
++++ b/client/src/main.ts
+@@ -21,6 +21,7 @@ import useSettingsStore, {
+     setLocalStorageSettings,
+ } from '@/stores/SettingsStore';
+ import Utils from '@/utils';
++import { installTvSpatialNavigation } from '@/utils/TvSpatialNavigation';
+ 
+ 
+ // スムーズスクロール周りの API の polyfill を適用
+@@ -59,6 +60,9 @@ app.use(FloatingVue);
+ // マウントを実行
+ app.mount('#app');
+ 
++// テレビ向け D-pad 空間ナビゲーションを有効化（方向キーを押したときだけ作動する）
++installTvSpatialNavigation();
++
+ // ***** Service Worker のイベントを登録 *****
+ 
+ const { updateServiceWorker } = useRegisterSW({
+--- a/client/src/utils/TvSpatialNavigation.ts
++++ b/client/src/utils/TvSpatialNavigation.ts
+@@ -0,0 +1,210 @@
++// TvSpatialNavigation.ts
++// テレビ向け D-pad 空間ナビゲーション
++//
++// リモコンの方向キーで画面上の対話要素へフォーカスリングを移動し、
++// Enter でクリックする。マウスカーソル方式のテレビブラウザの代替。
++//
++// 方針:
++// - フォーカスは仮想フォーカス (クラス付与) で管理し、Enter で click() を発火する
++//   → Vue 側のフォーカス管理と喧嘩しない
++// - 動画プレイヤー表示中は無効化し、プレイヤーのキー操作 (シーク等) を優先する
++// - フォーム入力中 (input/textarea/select/contenteditable) は素通しする
++// - マウス操作が来たらリングを消す (通常の PC 利用では何も起きない)
++
++type Direction = 'up' | 'down' | 'left' | 'right';
++
++const CANDIDATE_SELECTOR = [
++    'a[href]',
++    'button:not([disabled])',
++    'input:not([disabled]):not([type="hidden"])',
++    'select:not([disabled])',
++    'textarea:not([disabled])',
++    '[tabindex]:not([tabindex="-1"])',
++    '[role="button"]',
++    '[role="link"]',
++    '[role="tab"]',
++    '[role="menuitem"]',
++    '[role="option"]',
++    // KonomiTV 固有のクリック要素 (チャンネルのピン留めボタン等、div で実装されているもの)
++    '.channel__broadcaster-pin',
++].join(',');
++
++const FOCUS_CLASS = 'tv-spatial-nav-focus';
++const ACTIVE_CLASS = 'tv-spatial-nav-active';
++
++let current: HTMLElement | null = null;
++let active = false;
++let initialized = false;
++let lastHref = '';
++
++const STYLE_TEXT = `
++.${ACTIVE_CLASS} .${FOCUS_CLASS} {
++    outline: 3px solid #ec407a !important;
++    outline-offset: 2px;
++    box-shadow: 0 0 0 5px rgba(236, 64, 122, 0.35) !important;
++}
++`;
++
++function isVisible(el: HTMLElement): boolean {
++    const rect = el.getBoundingClientRect();
++    if (rect.width === 0 || rect.height === 0) {
++        return false;
++    }
++    // ビューポートと交差しない要素は除外する
++    // (Swiper の非アクティブスライドなど、画面外に配置された要素を拾わないため)
++    if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= window.innerWidth || rect.top >= window.innerHeight) {
++        return false;
++    }
++    const style = window.getComputedStyle(el);
++    return style.display !== 'none' && style.visibility !== 'hidden';
++}
++
++function getCandidates(): HTMLElement[] {
++    return Array.from(document.querySelectorAll<HTMLElement>(CANDIDATE_SELECTOR)).filter(isVisible);
++}
++
++function centerOf(rect: DOMRect): { x: number; y: number } {
++    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
++}
++
++function findNext(from: HTMLElement | null, dir: Direction): HTMLElement | null {
++    const candidates = getCandidates().filter((el) => el !== from);
++    if (candidates.length === 0) {
++        return null;
++    }
++    if (from === null) {
++        return candidates[0];
++    }
++    const fromCenter = centerOf(from.getBoundingClientRect());
++    let best: HTMLElement | null = null;
++    let bestScore = Infinity;
++    for (const el of candidates) {
++        const c = centerOf(el.getBoundingClientRect());
++        const dx = c.x - fromCenter.x;
++        const dy = c.y - fromCenter.y;
++        let primary: number;
++        let secondary: number;
++        switch (dir) {
++            case 'right':
++                if (dx <= 1) continue;
++                primary = dx;
++                secondary = Math.abs(dy);
++                break;
++            case 'left':
++                if (dx >= -1) continue;
++                primary = -dx;
++                secondary = Math.abs(dy);
++                break;
++            case 'down':
++                if (dy <= 1) continue;
++                primary = dy;
++                secondary = Math.abs(dx);
++                break;
++            case 'up':
++                if (dy >= -1) continue;
++                primary = -dy;
++                secondary = Math.abs(dx);
++                break;
++        }
++        // 主方向の距離 + 直交方向のずれ (ずれは二乗ペナルティで強めに効かせる)
++        const score = primary + (secondary * secondary) / Math.max(primary, 1) + secondary * 2;
++        if (score < bestScore) {
++            bestScore = score;
++            best = el;
++        }
++    }
++    return best;
++}
++
++function setFocus(el: HTMLElement | null): void {
++    if (current !== null) {
++        current.classList.remove(FOCUS_CLASS);
++    }
++    current = el;
++    if (current !== null) {
++        current.classList.add(FOCUS_CLASS);
++        current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
++    }
++}
++
++function isPlayerVisible(): boolean {
++    // KonomiTV のプレイヤー (video 要素) が実サイズで表示されている間は
++    // 方向キーをプレイヤー側 (シーク・音量) に譲る
++    const video = document.querySelector('video');
++    if (video === null) {
++        return false;
++    }
++    const rect = video.getBoundingClientRect();
++    return rect.width > 200 && rect.height > 100;
++}
++
++function isFormField(el: EventTarget | null): boolean {
++    if (!(el instanceof HTMLElement)) {
++        return false;
++    }
++    const tag = el.tagName;
++    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
++}
++
++function onKeyDown(event: KeyboardEvent): void {
++    const dirMap: Record<string, Direction> = {
++        ArrowUp: 'up',
++        ArrowDown: 'down',
++        ArrowLeft: 'left',
++        ArrowRight: 'right',
++    };
++    const dir = dirMap[event.key];
++    if (dir === undefined && event.key !== 'Enter') {
++        return;
++    }
++    if (isPlayerVisible()) {
++        return;
++    }
++    if (isFormField(document.activeElement) || isFormField(event.target)) {
++        return;
++    }
++    // ルート遷移していたら、剥がれた要素へのフォーカスを捨てる
++    if (location.href !== lastHref) {
++        lastHref = location.href;
++        if (current !== null && !document.contains(current)) {
++            current = null;
++        }
++    }
++
++    if (dir !== undefined) {
++        if (!active) {
++            active = true;
++            document.body.classList.add(ACTIVE_CLASS);
++        }
++        const from = current !== null && document.contains(current) ? current : null;
++        const next = findNext(from, dir);
++        if (next !== null) {
++            event.preventDefault();
++            event.stopPropagation();
++            setFocus(next);
++        }
++    } else if (event.key === 'Enter' && active && current !== null && document.contains(current)) {
++        event.preventDefault();
++        event.stopPropagation();
++        current.click();
++    }
++}
++
++export function installTvSpatialNavigation(): void {
++    if (initialized) {
++        return;
++    }
++    initialized = true;
++    lastHref = location.href;
++    const style = document.createElement('style');
++    style.textContent = STYLE_TEXT;
++    document.head.appendChild(style);
++    document.addEventListener('keydown', onKeyDown, true);
++    document.addEventListener('mousedown', () => {
++        if (active) {
++            active = false;
++            document.body.classList.remove(ACTIVE_CLASS);
++            setFocus(null);
++        }
++    });
++}
