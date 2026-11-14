@@ -3443,23 +3443,23 @@
 \ No newline at end of file
 --- a/client/src/views/Settings/General.vue
 +++ b/client/src/views/Settings/General.vue
-@@ -205,6 +205,16 @@
-                     v-model="settingsStore.settings.video_resume_rewind_seconds">
-                 </v-select>
+@@ -107,6 +107,16 @@
+                     v-model="settingsStore.settings.show_original_broadcast_time_during_playback">
+                 </v-switch>
              </div>
-+            <div class="settings__item">
-+                <div class="settings__item-heading">CM自動スキップ</div>
-+                <div class="settings__item-label">
-+                    録画番組の再生中に CM 区間へ入ったとき、自動で CM の終わりまでスキップします。CM 区間情報がある録画でのみ動作します。<br>
-+                    検出の誤りで本編が飛ぶこともあるため、必要なときだけ有効にしてください。このデバイス (ブラウザ) にのみ保存されます。
-+                </div>
++            <div class="settings__item settings__item--switch">
++                <label class="settings__item-heading" for="video_cm_auto_skip">CM自動スキップ</label>
++                <label class="settings__item-label" for="video_cm_auto_skip">
++                    録画番組の再生中に CM 区間へ入ったとき、自動で CM の終わりまでスキップします。CM 区間情報がある録画でのみ動作します。デフォルトはオフです。<br>
++                    検出の誤りで本編が飛ぶこともあるため、必要なときだけ有効にしてください。このデバイス (ブラウザ) にのみ保存されます。<br>
++                </label>
 +                <v-switch class="settings__item-switch" color="primary" id="video_cm_auto_skip" hide-details
 +                    v-model="settingsStore.settings.video_cm_auto_skip">
 +                </v-switch>
 +            </div>
              <v-divider class="mt-6"></v-divider>
              <div class="settings__item">
-                 <div class="settings__item-heading">設定をエクスポート</div>
+                 <div class="settings__item-heading">デフォルトのパネルの表示状態</div>
 --- a/client/src/views/Videos/Home.vue
 +++ b/client/src/views/Videos/Home.vue
 @@ -10,6 +10,13 @@
