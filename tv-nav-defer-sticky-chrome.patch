@@ -1,0 +1,95 @@
+--- a/client/src/utils/TvSpatialNavigation.ts
++++ b/client/src/utils/TvSpatialNavigation.ts
+@@ -209,36 +209,72 @@ function scoreFor(fromRect: RectLike, rect: RectLike, dir: Direction): number |
+     return primary + (secondary * secondary) / Math.max(primary, 1) + secondary * 2;
+ }
+ 
++// sticky / fixed な要素の中にあるかどうか
++// (タブバーのように画面上部へ張り付くバーは、常に現在位置の近くに
++//  見えるため、縦移動の候補として本来の項目より優先されてしまう)
++function isInStickyChrome(el: HTMLElement): boolean {
++    let node: HTMLElement | null = el;
++    while (node !== null && node !== document.body) {
++        const pos = window.getComputedStyle(node).position;
++        if (pos === 'sticky' || pos === 'fixed') {
++            return true;
++        }
++        node = node.parentElement;
++    }
++    return false;
++}
++
+ function findNext(fromRect: RectLike, dir: Direction, exclude: HTMLElement | null, pool?: HTMLElement[]): HTMLElement | null {
+     const candidates = pool ?? getCandidates();
+     // 縦移動では、他の候補の中に含まれる要素 (カード右上のピン留めボタン等) を候補から外す。
+     // 次のカードの上端にあるボタンはカード本体より縦の距離が近いため、
+     // スクロールのたびにボタンへ寄り道してしまう (横移動では従来通り到達できる)
+     const excludeContained = pool === undefined && (dir === 'up' || dir === 'down');
+-    let best: HTMLElement | null = null;
+-    let bestScore = Infinity;
+-    for (const el of candidates) {
+-        if (el === exclude) {
+-            continue;
+-        }
+-        if (excludeContained && candidates.some((other) => other !== el && other.contains(el))) {
+-            continue;
++    // 縦移動では、sticky / fixed なバー内の要素は「他に候補が無いときだけ」選ぶ。
++    // タブバーは画面上部に張り付いて常に見えているため、そのままだと
++    // 一覧を上へ送る途中で何度もバーへ寄り道してしまう
++    const deferChrome = pool === undefined && (dir === 'up' || dir === 'down');
++    const chromeCache = new Map<HTMLElement, boolean>();
++    const isChrome = (el: HTMLElement): boolean => {
++        let v = chromeCache.get(el);
++        if (v === undefined) {
++            v = isInStickyChrome(el);
++            chromeCache.set(el, v);
+         }
+-        const rect = el.getBoundingClientRect();
+-        // 縦移動では、現在の要素と横方向の範囲が重なる候補だけを対象にする
+-        // (右側の一覧を最後までスクロールしたときに、画面下部にある
+-        //  左サイドバーの項目へフォーカスが飛ばないように。
+-        //  サイドバーへは左キーで移る。操作モードなど専用プールには適用しない)
+-        if (pool === undefined && (dir === 'up' || dir === 'down') && (rect.left >= fromRect.right || rect.right <= fromRect.left)) {
+-            continue;
++        return v;
++    };
++    for (const pass of [0, 1]) {
++        let best: HTMLElement | null = null;
++        let bestScore = Infinity;
++        for (const el of candidates) {
++            if (el === exclude) {
++                continue;
++            }
++            if (excludeContained && candidates.some((other) => other !== el && other.contains(el))) {
++                continue;
++            }
++            if (deferChrome && pass === 0 && isChrome(el)) {
++                continue;
++            }
++            const rect = el.getBoundingClientRect();
++            // 縦移動では、現在の要素と横方向の範囲が重なる候補だけを対象にする
++            // (右側の一覧を最後までスクロールしたときに、画面下部にある
++            //  左サイドバーの項目へフォーカスが飛ばないように。
++            //  サイドバーへは左キーで移る。操作モードなど専用プールには適用しない)
++            if (pool === undefined && (dir === 'up' || dir === 'down') && (rect.left >= fromRect.right || rect.right <= fromRect.left)) {
++                continue;
++            }
++            const score = scoreFor(fromRect, rect, dir);
++            if (score !== null && score < bestScore) {
++                bestScore = score;
++                best = el;
++            }
+         }
+-        const score = scoreFor(fromRect, rect, dir);
+-        if (score !== null && score < bestScore) {
+-            bestScore = score;
+-            best = el;
++        if (best !== null || pass === 1 || !deferChrome) {
++            return best;
+         }
+     }
+-    return best;
++    return null;
+ }
+ 
+ // sticky / fixed のバー (チャンネルのタブバーなど) にフォーカス要素の端が
