@@ -317,6 +317,30 @@
  // 予約追加処理
  // mock の予約に含まれる record_settings (ユーザーがカスタマイズ可能) を使用して追加
  const handleAddReservation = async () => {
+--- a/client/src/components/Reservations/ReservationRecordingSettings.vue
++++ b/client/src/components/Reservations/ReservationRecordingSettings.vue
+@@ -28,8 +28,8 @@
+             </v-select>
+         </div>
+ 
+-        <!-- 録画予約の有効/無効 -->
+-        <div class="reservation-recording-settings__section">
++        <!-- 録画予約の有効/無効 (無効化はキーワード自動予約で作成された予約でのみ可能なため、その場合だけ表示する) -->
++        <div v-if="isKeywordAutoReservation" class="reservation-recording-settings__section">
+             <div class="reservation-recording-settings__header">
+                 <div class="reservation-recording-settings__label">録画予約の有効/無効</div>
+                 <v-switch
+@@ -260,6 +260,10 @@ const emit = defineEmits<{
+ // ストア
+ const versionStore = useVersionStore();
+ 
++// キーワード自動予約で作成された予約かどうか
++// 手動予約には EPGStation 側に無効化の概念がないため、有効/無効トグルの表示判定に使う
++const isKeywordAutoReservation = computed(() => (props.reservation.comment ?? '').includes('EPG自動予約'));
++
+ // 設定のコピーを作成（元の設定を変更しないため）
+ const settings = ref<IRecordSettings>(structuredClone(toRaw(props.reservation.record_settings)));
+ 
 --- a/client/src/components/TimeTable/TimeTableProgramCell.vue
 +++ b/client/src/components/TimeTable/TimeTableProgramCell.vue
 @@ -43,6 +43,11 @@
