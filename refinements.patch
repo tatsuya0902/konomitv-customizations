@@ -58,7 +58,7 @@
      <!-- ゴミ箱移動確認ダイアログ (ローカル改造) -->
      <v-dialog max-width="750" v-model="show_trash_confirmation">
          <v-card>
-@@ -221,7 +177,7 @@
+@@ -221,7 +177,7 @@ import { ref, computed, watch } from 'vue';
  import RecordedFileInfoDialog from '@/components/Videos/Dialogs/RecordedFileInfoDialog.vue';
  import Message from '@/message';
  import { recordingProtectionBadges, requestRecordingProtectionBadge, updateRecordingProtectionBadge } from '@/services/RecordingProtectionBadges';
@@ -67,7 +67,7 @@
  import useSettingsStore from '@/stores/SettingsStore';
  import useUserStore from '@/stores/UserStore';
  import Utils, { ProgramUtils } from '@/utils';
-@@ -244,10 +200,8 @@
+@@ -244,10 +200,8 @@ const emit = defineEmits<{
  // ファイル情報ダイアログの表示状態
  const show_video_info = ref(false);
  // ゴミ箱移動確認ダイアログの表示状態 (ローカル改造)
@@ -79,7 +79,7 @@
  
  // 一覧に並んだ時点でまとめて取得し、メニューを開かなくても分かるようにする。
  // ローカル改造: バッジ取得 (ログイン時のみ実行される) の結果があればそれを優先し、
-@@ -377,31 +331,6 @@
+@@ -377,31 +331,6 @@ const removeFromWatchedHistory = () => {
      Message.show('視聴履歴から削除しました。');
  };
  
@@ -111,7 +111,7 @@
  // ゴミ箱へ移動 (ローカル改造: ファイルは削除されず、保持期間内は復元できる)
  const moveToTrash = async () => {
      show_trash_confirmation.value = false;
-@@ -992,17 +921,6 @@
+@@ -992,17 +921,6 @@ const moveToTrash = async () => {
      100% { opacity: 0; }
  }
  
@@ -153,7 +153,7 @@
              <WatchNavigation />
              <div class="watch-content"
                   @mousemove="playerStore.event_emitter.emit('SetControlDisplayTimer', {event: $event, is_player_region_event: true})"
-@@ -33,6 +40,7 @@
+@@ -33,6 +40,7 @@ import LShapedScreenCropSettings from '@/components/Watch/LShapedScreenCropSetti
  import WatchNavigation from '@/components/Watch/Navigation.vue';
  import WatchPanel from '@/components/Watch/Panel.vue';
  import WatchPlayer from '@/components/Watch/Player.vue';
@@ -161,7 +161,7 @@
  import usePlayerStore from '@/stores/PlayerStore';
  import useSettingsStore from '@/stores/SettingsStore';
  import Utils from '@/utils';
-@@ -58,8 +66,16 @@
+@@ -58,8 +66,16 @@ export default defineComponent({
          return {
              // ユーティリティをテンプレートで使えるように
              Utils: Object.freeze(Utils),
@@ -178,7 +178,7 @@
      computed: {
          ...mapStores(usePlayerStore, useSettingsStore),
      },
-@@ -69,6 +85,16 @@
+@@ -69,6 +85,16 @@ export default defineComponent({
              immediate: true,
              handler(isPseudoFullscreen: boolean) {
                  document.documentElement.classList.toggle('watch-pseudo-fullscreen', isPseudoFullscreen);
@@ -195,7 +195,7 @@
              },
          },
          // 前回視聴画面を開いた際にパネルが表示されていたかどうかを随時保存する
-@@ -102,6 +128,8 @@
+@@ -102,6 +128,8 @@ export default defineComponent({
      // 終了前に実行
      beforeUnmount() {
  
@@ -204,7 +204,7 @@
          document.documentElement.classList.remove('watch-pseudo-fullscreen');
  
          // PlayerStore に視聴画面を閉じたことを伝える
-@@ -126,19 +154,20 @@
+@@ -126,19 +154,20 @@ html.watch-pseudo-fullscreen body {
  
  .watch-container.watch-container--fullscreen.watch-container--pseudo-fullscreen {
      position: fixed;
@@ -231,7 +231,7 @@
          display: none !important;
      }
      .watch-content, .watch-player, .watch-player__dplayer {
-@@ -152,6 +181,60 @@
+@@ -152,6 +181,60 @@ html.watch-pseudo-fullscreen body {
      }
  }
  
@@ -294,7 +294,7 @@
  // コントロール表示時
 --- a/client/src/main.ts
 +++ b/client/src/main.ts
-@@ -150,5 +150,11 @@
+@@ -150,5 +150,11 @@ window.setInterval(async () => {
  
          // サーバーに保存されている設定データをこのクライアントに同期する
          await settings_store.syncClientSettingsFromServer();
@@ -308,7 +308,7 @@
  }, 3 * 1000);  // 3秒おき
 --- a/client/src/services/CommentHighlights.ts
 +++ b/client/src/services/CommentHighlights.ts
-@@ -24,6 +24,10 @@
+@@ -24,6 +24,10 @@ const MAX_GAP_BINS = 2;
  const MIN_SEGMENT_BINS = 3;
  // 区間の合計がこの比率を超えたら盛り上がり区間として扱わない
  const MAX_COVERAGE_RATIO = 0.7;
@@ -319,7 +319,7 @@
  
  /** 盛り上がり区間 */
  export interface IHighlightSegment {
-@@ -141,7 +145,21 @@
+@@ -141,7 +145,21 @@ export function extractHighlightSegments(density: ICommentDensity): IHighlightSe
      if (density.duration > 0 && covered / density.duration > MAX_COVERAGE_RATIO) {
          return [];
      }
@@ -344,7 +344,7 @@
  
 --- a/client/src/services/player/PlayerController.ts
 +++ b/client/src/services/player/PlayerController.ts
-@@ -1719,6 +1719,21 @@
+@@ -1796,6 +1796,21 @@ class PlayerController {
                  event.preventDefault();
              }
          };
@@ -366,7 +366,7 @@
          document.addEventListener('fullscreenchange', fullscreen_handler);
          document.addEventListener('webkitfullscreenchange', fullscreen_handler);
          document.addEventListener('keydown', escape_handler);
-@@ -1726,6 +1741,8 @@
+@@ -1803,6 +1818,8 @@ class PlayerController {
              document.removeEventListener('fullscreenchange', fullscreen_handler);
              document.removeEventListener('webkitfullscreenchange', fullscreen_handler);
              document.removeEventListener('keydown', escape_handler);
@@ -500,7 +500,7 @@
 +}
 --- a/client/src/services/player/managers/ExcitementManager.ts
 +++ b/client/src/services/player/managers/ExcitementManager.ts
-@@ -29,8 +29,12 @@
+@@ -29,8 +29,12 @@ class ExcitementManager implements PlayerManager {
      private static readonly MAX_GAP_BINS = 2;
      // 盛り上がり区間が全体のこの割合を超える場合はダイジェストの意味がないため区間なしとする
      private static readonly MAX_COVERAGE_RATIO = 0.7;
@@ -515,7 +515,7 @@
  
      // DPlayer のインスタンス
      private readonly player: DPlayer;
-@@ -228,7 +232,19 @@
+@@ -228,7 +232,19 @@ class ExcitementManager implements PlayerManager {
          if (this.duration > 0 && covered / this.duration > ExcitementManager.MAX_COVERAGE_RATIO) {
              return [];
          }
@@ -538,7 +538,7 @@
  
 --- a/client/src/stores/SettingsStore.ts
 +++ b/client/src/stores/SettingsStore.ts
-@@ -587,6 +587,14 @@
+@@ -595,6 +595,14 @@ export let is_last_synced_at_updating: boolean = false;
   */
  export let is_syncing_client_settings_from_server: boolean = false;
  
@@ -553,7 +553,7 @@
  
  /**
   * 設定データを共有するストア
-@@ -723,6 +731,41 @@
+@@ -731,6 +739,41 @@ const useSettingsStore = defineStore('settings', {
              }
          },
  

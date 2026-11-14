@@ -227,7 +227,7 @@
      onRegisterError(error) {
 --- a/client/src/services/player/PlayerController.ts
 +++ b/client/src/services/player/PlayerController.ts
-@@ -977,6 +977,16 @@ class PlayerController {
+@@ -978,6 +978,16 @@ class PlayerController {
                  this.player.seek(event.playback_position);
                  this.player.play();
              });
@@ -244,7 +244,7 @@
          }
  
          // プレイヤー再起動ボタンを DPlayer の UI に追加する (再生が止まった際などに利用する想定)
-@@ -1018,7 +1028,6 @@ class PlayerController {
+@@ -1019,7 +1029,6 @@ class PlayerController {
          // レコーダーのチャプターボタンと同様に、CM 区間の境目 (本編/CM の切り替わり) を移動する
          const cm_sections = player_store.recorded_program?.recorded_video?.cm_sections;
          if (this.playback_mode === 'Video' && cm_sections && cm_sections.length > 0) {
@@ -252,7 +252,7 @@
              const left_icons = this.player.container.querySelector('.dplayer-icons.dplayer-icons-left');
              if (left_icons !== null) {
                  left_icons.insertAdjacentHTML('beforeend', `
-@@ -1036,30 +1045,10 @@ class PlayerController {
+@@ -1037,30 +1046,10 @@ class PlayerController {
                      </div>
                  `);
                  this.player.container.querySelector('.dplayer-next-chapter-icon')!.addEventListener('click', () => {
@@ -285,7 +285,7 @@
                  });
              }
          }
-@@ -1140,6 +1129,44 @@ class PlayerController {
+@@ -1158,6 +1147,44 @@ class PlayerController {
       * 処理の完了を待つ必要はないので、基本 await せず非同期で実行すべき
       * 基本 Safari だとなぜか再生開始がうまく行かないことが多いので（自動再生まわりが影響してる？）、その対策として用意した処理
       */
@@ -330,7 +330,7 @@
      private async recoverPlayback(): Promise<void> {
          assert(this.player !== null);
          const player_store = usePlayerStore();
-@@ -2235,6 +2262,11 @@ class PlayerController {
+@@ -2253,6 +2280,11 @@ class PlayerController {
              return;
          }
          this.destroying = true;

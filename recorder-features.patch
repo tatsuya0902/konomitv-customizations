@@ -2039,19 +2039,20 @@
  export default Videos;
 --- a/client/src/services/player/PlayerController.ts
 +++ b/client/src/services/player/PlayerController.ts
-@@ -11,6 +11,11 @@ import CustomBufferController from '@/services/player/CustomBufferController';
+@@ -11,6 +11,12 @@ import CustomBufferController from '@/services/player/CustomBufferController';
  import CaptureManager from '@/services/player/managers/CaptureManager';
  import DocumentPiPManager from '@/services/player/managers/DocumentPiPManager';
  import ExcitementManager from '@/services/player/managers/ExcitementManager';
 +import ChasePlaybackManager from '@/services/player/managers/ChasePlaybackManager';
 +import AutoPlayNextManager from '@/services/player/managers/AutoPlayNextManager';
++import CmAutoSkipManager from '@/services/player/managers/CmAutoSkipManager';
 +import SleepTimerManager from '@/services/player/managers/SleepTimerManager';
 +import HighlightReelManager from '@/services/player/managers/HighlightReelManager';
 +import WatchedReportManager from '@/services/player/managers/WatchedReportManager';
  import KeyboardShortcutManager from '@/services/player/managers/KeyboardShortcutManager';
  import LiveCommentManager from '@/services/player/managers/LiveCommentManager';
  import LiveDataBroadcastingManager from '@/services/player/managers/LiveDataBroadcastingManager';
-@@ -119,8 +124,13 @@ class PlayerController {
+@@ -119,8 +125,13 @@ class PlayerController {
          const player_store = usePlayerStore();
          if (player_store.selected_quality_profile_type !== null) {
              // 視聴画面内で手動変更済みなら、プレイヤー再作成後もその選択を使う
@@ -2066,7 +2067,7 @@
          } else {
              // 手動変更がない場合は、現在の回線種別から画質プロファイルを選ぶ
              // Wi-Fi 回線の場合や回線種別を取得できなかった場合は、Wi-Fi 向けの画質プロファイルを使う
-@@ -189,6 +199,35 @@ class PlayerController {
+@@ -189,6 +200,35 @@ class PlayerController {
      }
  
  
@@ -2102,7 +2103,7 @@
      /**
       * ライブ視聴: 許容する HTMLMediaElement の内部再生バッファの秒数
       */
-@@ -975,6 +1014,56 @@ class PlayerController {
+@@ -975,6 +1015,72 @@ class PlayerController {
              this.player?.notice('プレイヤーを再起動しました。', undefined, undefined, undefined);
          });
  
@@ -2156,10 +2157,26 @@
 +            }
 +        }
 +
++        // シークバーに CM 区間を帯状に表示する (録画再生時かつ CM 区間がある場合のみ、ローカル改造)
++        if (this.playback_mode === 'Video' && cm_sections && cm_sections.length > 0) {
++            const duration = player_store.recorded_program?.recorded_video?.duration ?? 0;
++            const bar = this.player.container.querySelector('.dplayer-bar');
++            if (bar !== null && duration > 0) {
++                for (const section of cm_sections) {
++                    const section_element = document.createElement('div');
++                    section_element.className = 'dplayer-cm-section';
++                    section_element.style.cssText = 'position:absolute;top:0;height:100%;pointer-events:none;z-index:2;'
++                        + `left:${(section.start_time / duration) * 100}%;width:${((section.end_time - section.start_time) / duration) * 100}%;`
++                        + 'background:rgba(0,0,0,0.45);';
++                    bar.appendChild(section_element);
++                }
++            }
++        }
++
          // Screen Wake Lock API を利用して画面の自動スリープを抑制する
          // 待つ必要はないので非同期で実行
          if ('wakeLock' in navigator) {
-@@ -997,6 +1086,7 @@ class PlayerController {
+@@ -997,6 +1103,7 @@ class PlayerController {
                  new DocumentPiPManager(this.player, this.playback_mode),
                  new KeyboardShortcutManager(this.player, this.playback_mode),
                  new MediaSessionManager(this.player, this.playback_mode),
@@ -2167,10 +2184,11 @@
              ];
          } else {
              // ビデオ視聴時に設定する PlayerManager
-@@ -1007,6 +1097,11 @@ class PlayerController {
+@@ -1007,6 +1114,12 @@ class PlayerController {
                  new MediaSessionManager(this.player, this.playback_mode),
                  new SeekControlManager(this.player, this.playback_mode),
                  new ExcitementManager(this.player, this.playback_mode),
++                new CmAutoSkipManager(this.player, this.playback_mode),
 +                new ChasePlaybackManager(this.player, this.playback_mode),
 +                new AutoPlayNextManager(this.player, this.playback_mode),
 +                new SleepTimerManager(this.player, this.playback_mode),
@@ -2179,7 +2197,7 @@
              ];
          }
  
-@@ -1489,6 +1584,13 @@ class PlayerController {
+@@ -1489,6 +1602,13 @@ class PlayerController {
          // 画質切り替え開始時のイベント
          this.player.on('quality_start', on_init_or_quality_change);
  
@@ -2193,7 +2211,7 @@
          // 動画の統計情報の表示/非表示を切り替える隠しコマンドのイベントハンドラーを登録
          // iOS / iPadOS Safari では DPlayer 側の contextmenu が長押ししても発火しないため、代替の表示手段として用意
          // 番組情報タブ内の NEXT >> を 500ms 以内に3回連続でタップすると統計情報の表示/非表示が切り替わる
-@@ -1732,6 +1834,8 @@ class PlayerController {
+@@ -1732,6 +1852,8 @@ class PlayerController {
              if (toggle_mobile_profile_input.checked) {
                  this.quality_profile_type = 'Cellular';
                  player_store.selected_quality_profile_type = this.quality_profile_type;
@@ -2202,7 +2220,7 @@
                  player_store.event_emitter.emit('PlayerRestartRequired', {
                      message: 'モバイル回線向けの画質プロファイルに切り替えました。',
                      // 他の通知と被らないように、メッセージを遅らせて表示する
-@@ -1744,6 +1848,8 @@ class PlayerController {
+@@ -1744,6 +1866,8 @@ class PlayerController {
              } else {
                  this.quality_profile_type = 'Wi-Fi';
                  player_store.selected_quality_profile_type = this.quality_profile_type;
@@ -2629,6 +2647,130 @@
 +}
 +
 +export default ChasePlaybackManager;
+--- a/client/src/services/player/managers/CmAutoSkipManager.ts
++++ b/client/src/services/player/managers/CmAutoSkipManager.ts
+@@ -0,0 +1,121 @@
++
++import DPlayer from 'dplayer';
++
++import PlayerManager from '@/services/player/PlayerManager';
++import usePlayerStore from '@/stores/PlayerStore';
++import useSettingsStore from '@/stores/SettingsStore';
++
++
++/**
++ * CM 区間へ入ったら自動で CM の終わりまでスキップする PlayerManager (ローカル改造)
++ * 設定 (video_cm_auto_skip) が有効な場合のみ動作する。手動のチャプター移動は常時可能
++ */
++class CmAutoSkipManager implements PlayerManager {
++
++    // ユーザー操作により DPlayer 側で画質が切り替わった際、この PlayerManager の再起動が必要かどうかを PlayerController に示す値
++    public readonly restart_required_when_quality_switched = false;
++
++    // DPlayer のインスタンス
++    private readonly player: DPlayer;
++
++    // 再生モード (Live: ライブ視聴, Video: ビデオ視聴)
++    private readonly playback_mode: 'Live' | 'Video';
++
++    // 破棄済みかどうか
++    private destroyed = false;
++
++    // timeupdate イベントのハンドラ
++    private timeupdate_handler: (() => void) | null = null;
++
++    // 前回の timeupdate 時点の再生位置 (CM 区間の開始を跨いだかを判定するために使う)
++    private last_position = -1;
++
++    /**
++     * コンストラクタ
++     * @param player DPlayer のインスタンス
++     * @param playback_mode 再生モード (Live: ライブ視聴, Video: ビデオ視聴)
++     */
++    constructor(player: DPlayer, playback_mode: 'Live' | 'Video') {
++        this.player = player;
++        this.playback_mode = playback_mode;
++    }
++
++
++    /**
++     * CM 自動スキップの監視を開始する
++     */
++    public async init(): Promise<void> {
++        this.destroyed = false;
++        this.last_position = -1;
++
++        // 録画再生時のみ動作する
++        if (this.playback_mode !== 'Video') {
++            return;
++        }
++
++        this.timeupdate_handler = () => this.onTimeUpdate();
++        this.player.video.addEventListener('timeupdate', this.timeupdate_handler);
++    }
++
++
++    /**
++     * CM 自動スキップの監視を終了する
++     */
++    public async destroy(): Promise<void> {
++        if (this.timeupdate_handler !== null) {
++            this.player.video.removeEventListener('timeupdate', this.timeupdate_handler);
++            this.timeupdate_handler = null;
++        }
++        this.destroyed = true;
++    }
++
++
++    // 再生位置の更新ごとに、CM 区間の開始を跨いだら区間の終わりへスキップする
++    private onTimeUpdate(): void {
++        if (this.destroyed === true) {
++            return;
++        }
++        const video = this.player.video;
++        const now = video.currentTime;
++
++        // 一時停止中は判定しない (再開位置の記録だけ更新する)
++        if (video.paused === true) {
++            this.last_position = now;
++            return;
++        }
++
++        // 設定が無効な場合は何もしない
++        const settings_store = useSettingsStore();
++        if (settings_store.settings.video_cm_auto_skip !== true) {
++            this.last_position = now;
++            return;
++        }
++
++        // CM 区間がない録画では何もしない
++        const player_store = usePlayerStore();
++        const cm_sections = player_store.recorded_program?.recorded_video?.cm_sections;
++        if (!cm_sections || cm_sections.length === 0) {
++            this.last_position = now;
++            return;
++        }
++
++        const prev = this.last_position;
++        this.last_position = now;
++        if (prev < 0) {
++            return;
++        }
++
++        for (const section of cm_sections) {
++            // 再生が CM 区間の開始を跨いだら、CM の終わりまでスキップする
++            // (シークで CM 区間の途中へ入った場合は、開始を跨いでいないためスキップしない)
++            if (prev < section.start_time && now >= section.start_time && now < section.end_time) {
++                this.player.seek(section.end_time);
++                this.player.notice('CM をスキップしました');
++                this.last_position = section.end_time;
++                return;
++            }
++        }
++    }
++}
++
++export default CmAutoSkipManager;
 --- a/client/src/services/player/managers/HighlightReelManager.ts
 +++ b/client/src/services/player/managers/HighlightReelManager.ts
 @@ -0,0 +1,210 @@
@@ -3171,27 +3313,31 @@
  
 --- a/client/src/stores/SettingsStore.ts
 +++ b/client/src/stores/SettingsStore.ts
-@@ -88,6 +88,7 @@ export interface ILocalClientSettings extends IClientSettings {
+@@ -88,6 +88,8 @@ export interface ILocalClientSettings extends IClientSettings {
      video_seek_forward_seconds: number;
      video_playback_rate: number;
      video_resume_rewind_seconds: number;
++    video_cm_auto_skip: boolean;
 +    last_quality_profile_type: 'Wi-Fi' | 'Cellular' | null;
      tv_streaming_quality: LiveStreamingQuality;
      tv_streaming_quality_cellular: LiveStreamingQuality;
      tv_data_saver_mode: boolean;
-@@ -249,6 +250,8 @@ export const ILocalClientSettingsDefault: ILocalClientSettings = {
+@@ -249,6 +251,10 @@ export const ILocalClientSettingsDefault: ILocalClientSettings = {
      video_playback_rate: 1,
      // ビデオ視聴時の続き再生で手前に戻す秒数 (Default: 10秒) (ローカル改造で追加)
      video_resume_rewind_seconds: 10,
++    // ビデオ視聴時に CM 区間へ入ったら自動でスキップするか (Default: false) (ローカル改造で追加)
++    video_cm_auto_skip: false,
 +    // 最後に手動で切り替えた画質プロファイル (ページ移動後も引き継ぐ) (Default: null = 回線種別から自動判定) (ローカル改造で追加)
 +    last_quality_profile_type: null,
  
      // ***** 設定 → 画質 *****
  
-@@ -411,6 +414,7 @@ export const SYNCABLE_SETTINGS_KEYS: (keyof IClientSettings)[] = [
+@@ -411,6 +417,8 @@ export const SYNCABLE_SETTINGS_KEYS: (keyof IClientSettings)[] = [
      // video_seek_forward_seconds: 同期無効 (ローカル改造で追加した端末ローカル設定)
      // video_playback_rate: 同期無効 (ローカル改造で追加した端末ローカル設定)
      // video_resume_rewind_seconds: 同期無効 (ローカル改造で追加した端末ローカル設定)
++    // video_cm_auto_skip: 同期無効 (ローカル改造で追加した端末ローカル設定)
 +    // last_quality_profile_type: 同期無効 (ローカル改造で追加した端末ローカル設定)
      // tv_streaming_quality: 同期無効
      // tv_streaming_quality_cellular: 同期無効
@@ -3295,6 +3441,25 @@
 +}
  </style>
 \ No newline at end of file
+--- a/client/src/views/Settings/General.vue
++++ b/client/src/views/Settings/General.vue
+@@ -205,6 +205,16 @@
+                     v-model="settingsStore.settings.video_resume_rewind_seconds">
+                 </v-select>
+             </div>
++            <div class="settings__item">
++                <div class="settings__item-heading">CM自動スキップ</div>
++                <div class="settings__item-label">
++                    録画番組の再生中に CM 区間へ入ったとき、自動で CM の終わりまでスキップします。CM 区間情報がある録画でのみ動作します。<br>
++                    検出の誤りで本編が飛ぶこともあるため、必要なときだけ有効にしてください。このデバイス (ブラウザ) にのみ保存されます。
++                </div>
++                <v-switch class="settings__item-switch" color="primary" id="video_cm_auto_skip" hide-details
++                    v-model="settingsStore.settings.video_cm_auto_skip">
++                </v-switch>
++            </div>
+             <v-divider class="mt-6"></v-divider>
+             <div class="settings__item">
+                 <div class="settings__item-heading">設定をエクスポート</div>
 --- a/client/src/views/Videos/Home.vue
 +++ b/client/src/views/Videos/Home.vue
 @@ -10,6 +10,13 @@
