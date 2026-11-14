@@ -68,7 +68,7 @@
  import { useRouter } from 'vue-router';
  
  import RecordedProgram from '@/components/Videos/RecordedProgram.vue';
-@@ -129,7 +117,7 @@
+@@ -129,7 +117,7 @@ const props = withDefaults(defineProps<{
  });
  
  // Emits
@@ -77,7 +77,7 @@
      (e: 'update:page', page: number): void;
      (e: 'update:sortOrder', order: SortOrder | MylistSortOrder): void;
      (e: 'more'): void;
-@@ -141,6 +129,32 @@
+@@ -141,6 +129,32 @@ const current_page = ref(props.page);
  // 並び順
  const sort_order = ref<SortOrder | MylistSortOrder>(props.sortOrder);
  
@@ -110,7 +110,7 @@
  // 内部で管理するプログラムリスト
  const displayPrograms = ref<IRecordedProgram[]>([...props.programs]);
  // 内部で管理する合計数
-@@ -272,31 +286,37 @@
+@@ -272,31 +286,37 @@ const handleProgramDeleted = (id: number) => {
          align-items: center;
          flex-shrink: 0;
          margin-left: auto;
@@ -186,7 +186,7 @@
          <router-link v-ripple class="watch-navigation__link" active-class="watch-navigation__link--active"
 --- a/client/src/main.ts
 +++ b/client/src/main.ts
-@@ -21,6 +21,7 @@
+@@ -21,6 +21,7 @@ import useSettingsStore, {
      setLocalStorageSettings,
  } from '@/stores/SettingsStore';
  import Utils from '@/utils';
@@ -194,7 +194,7 @@
  
  
  // スムーズスクロール周りの API の polyfill を適用
-@@ -59,12 +60,29 @@
+@@ -59,12 +60,29 @@ app.use(FloatingVue);
  // マウントを実行
  app.mount('#app');
  
@@ -1395,7 +1395,7 @@
                  </div>
              </div>
          </main>
-@@ -233,6 +238,9 @@
+@@ -233,6 +238,9 @@ onMounted(async () => {
      display: flex;
      gap: 8px;
      margin-bottom: 10px;
@@ -1425,14 +1425,3 @@
                              { name: '検索結果', path: `/videos/search?query=${encodeURIComponent(query)}` },
                          ]"
                          @update:page="updatePage"
---- a/client/src/views/Videos/Trash.vue
-+++ b/client/src/views/Videos/Trash.vue
-@@ -8,7 +8,7 @@
-                 <div class="recorded-programs-container">
-                     <Breadcrumbs :crumbs="[
-                         { name: 'ホーム', path: '/' },
--                        { name: 'ビデオをみる', path: '/videos/' },
-+                        { name: 'ビデオをみる', path: '/videos/programs' },
-                         { name: 'ゴミ箱', path: '/videos/trash', disabled: true },
-                     ]" />
-                     <h1 class="trash-title">ゴミ箱</h1>

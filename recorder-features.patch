@@ -1,3 +1,195 @@
+--- a/client/src/components/Reservations/ReservationConditionsDialog.vue
++++ b/client/src/components/Reservations/ReservationConditionsDialog.vue
+@@ -0,0 +1,189 @@
++<template>
++    <v-dialog max-width="900" transition="slide-y-transition" :model-value="show" @update:model-value="$emit('update:show', $event)">
++        <v-card class="reservation-conditions">
++            <v-card-title class="px-5 pt-6 pb-3 d-flex align-center font-weight-bold" style="height: 60px;">
++                <Icon icon="fluent:calendar-multiple-16-filled" height="24px" />
++                <span class="ml-3">自動予約の条件</span>
++                <v-spacer></v-spacer>
++                <div v-ripple class="d-flex align-center rounded-circle cursor-pointer px-2 py-2" @click="$emit('update:show', false)">
++                    <Icon icon="fluent:dismiss-12-filled" width="23px" height="23px" />
++                </div>
++            </v-card-title>
++            <div class="px-5 pb-6">
++                <p class="reservation-conditions__note">条件に一致する番組は、番組表が更新されるたびに自動で録画予約されます。条件を削除しても、すでに作成された録画予約はそのまま残ります。</p>
++                <div v-if="is_loading" class="py-6 text-center">読み込み中です…</div>
++                <div v-else-if="conditions.length === 0" class="py-6 text-center">自動予約の条件はまだありません</div>
++                <div v-for="condition in conditions" :key="condition.id" class="reservation-conditions__item">
++                    <Icon icon="fluent:calendar-multiple-16-regular" width="20px" height="20px" style="flex-shrink: 0" />
++                    <div class="reservation-conditions__body">
++                        <div class="reservation-conditions__keyword">{{ keywordLabel(condition) }}</div>
++                        <div class="reservation-conditions__meta">{{ metaLine(condition) }}</div>
++                    </div>
++                    <span v-if="!condition.program_search_condition.is_enabled" class="reservation-conditions__disabled">無効</span>
++                    <v-btn variant="text" size="small" color="error" @click="askDelete(condition)">削除</v-btn>
++                </div>
++            </div>
++        </v-card>
++        <!-- 削除の確認ダイアログ -->
++        <v-dialog v-model="show_delete_confirm" max-width="440" persistent>
++            <v-card>
++                <v-card-title class="d-flex justify-center pt-6 font-weight-bold">この自動予約を削除しますか？</v-card-title>
++                <v-card-text class="text-center">
++                    「{{ deleting?.program_search_condition.keyword }}」の自動予約をやめます。<br>
++                    すでに作成された録画予約はそのまま残ります。
++                </v-card-text>
++                <v-card-actions class="d-flex justify-center pb-6">
++                    <v-btn variant="text" @click="show_delete_confirm = false">キャンセル</v-btn>
++                    <v-btn color="error" variant="flat" class="px-3" :loading="is_deleting" @click="confirmDelete">削除する</v-btn>
++                </v-card-actions>
++            </v-card>
++        </v-dialog>
++    </v-dialog>
++</template>
++<script lang="ts">
++
++import { defineComponent } from 'vue';
++
++import Message from '@/message';
++import Channels, { IChannel } from '@/services/Channels';
++import ReservationConditions, { IReservationCondition } from '@/services/ReservationConditions';
++
++// ローカル改造: キーワード自動予約条件 (シリーズ予約) の一覧表示と削除を行うダイアログ
++// 条件の作成は視聴画面パネルと予約詳細ドロワーの「シリーズ予約」から行う
++export default defineComponent({
++    name: 'ReservationConditionsDialog',
++    props: {
++        show: {
++            type: Boolean,
++            default: false,
++        },
++    },
++    emits: ['update:show'],
++    data() {
++        return {
++            // 自動予約条件の一覧
++            conditions: [] as IReservationCondition[],
++            // チャンネル名の解決用 (全チャンネルをフラットに保持)
++            channels: [] as IChannel[],
++            is_loading: false,
++            // 削除確認中の条件
++            deleting: null as IReservationCondition | null,
++            show_delete_confirm: false,
++            is_deleting: false,
++        };
++    },
++    watch: {
++        // ダイアログが開かれたら最新の条件を取得する
++        async show(is_shown: boolean): Promise<void> {
++            if (is_shown) {
++                await this.load();
++            }
++        },
++    },
++    methods: {
++        async load(): Promise<void> {
++            this.is_loading = true;
++            try {
++                const [conditions_result, channels_result] = await Promise.all([
++                    ReservationConditions.fetchReservationConditions(),
++                    Channels.fetchAllChannels(),
++                ]);
++                this.conditions = conditions_result?.reservation_conditions ?? [];
++                if (channels_result) {
++                    this.channels = [
++                        ...channels_result.GR, ...channels_result.BS, ...channels_result.CS,
++                        ...channels_result.CATV, ...channels_result.SKY,
++                    ];
++                }
++            } finally {
++                this.is_loading = false;
++            }
++        },
++        // 条件の見出し (キーワード)
++        keywordLabel(condition: IReservationCondition): string {
++            const keyword = condition.program_search_condition.keyword;
++            return keyword !== '' ? keyword : '（キーワード指定なし）';
++        },
++        // チャンネル名と予約追加件数の行
++        metaLine(condition: IReservationCondition): string {
++            const ranges = condition.program_search_condition.service_ranges;
++            let channel_label = '全チャンネル';
++            if (ranges !== null && ranges.length > 0) {
++                channel_label = ranges.map((range) => {
++                    const channel = this.channels.find((ch) =>
++                        ch.network_id === range.network_id &&
++                        ch.transport_stream_id === range.transport_stream_id &&
++                        ch.service_id === range.service_id);
++                    return channel?.name ?? `SID ${range.service_id}`;
++                }).join('、');
++            }
++            return `${channel_label} ・ これまでの予約追加 ${condition.reservation_count} 件`;
++        },
++        // 削除の確認を出す
++        askDelete(condition: IReservationCondition): void {
++            this.deleting = condition;
++            this.show_delete_confirm = true;
++        },
++        // 条件を削除する
++        async confirmDelete(): Promise<void> {
++            if (this.deleting === null || this.is_deleting) {
++                return;
++            }
++            this.is_deleting = true;
++            try {
++                const success = await ReservationConditions.deleteReservationCondition(this.deleting.id);
++                if (success) {
++                    Message.show('自動予約の条件を削除しました。');
++                    this.show_delete_confirm = false;
++                    this.deleting = null;
++                    await this.load();
++                }
++            } finally {
++                this.is_deleting = false;
++            }
++        },
++    },
++});
++
++</script>
++<style lang="scss" scoped>
++
++.reservation-conditions {
++    &__note {
++        color: rgb(var(--v-theme-text-lighten-1));
++        font-size: 13px;
++        margin-bottom: 4px;
++    }
++    &__item {
++        display: flex;
++        align-items: center;
++        gap: 12px;
++        padding: 12px 4px;
++        border-bottom: 1px solid rgb(var(--v-theme-background-lighten-2));
++        &:last-child {
++            border-bottom: none;
++        }
++    }
++    &__body {
++        flex: 1;
++        min-width: 0;
++    }
++    &__keyword {
++        font-weight: 700;
++        white-space: nowrap;
++        overflow: hidden;
++        text-overflow: ellipsis;
++    }
++    &__meta {
++        color: rgb(var(--v-theme-text-lighten-1));
++        font-size: 13px;
++        margin-top: 2px;
++    }
++    &__disabled {
++        color: rgb(var(--v-theme-error));
++        font-size: 13px;
++        flex-shrink: 0;
++    }
++}
++
++</style>
 --- a/client/src/components/Reservations/ReservationDetailDrawer.vue
 +++ b/client/src/components/Reservations/ReservationDetailDrawer.vue
 @@ -75,6 +75,10 @@
@@ -11,13 +203,27 @@
                  <!-- 実際の予約がある場合: 削除ボタン -->
                  <v-btn v-if="hasRealReservation" class="px-3" variant="text" @click="handleDelete">
                      <Icon icon="fluent:delete-16-regular" width="20px" height="20px" />
-@@ -190,11 +194,13 @@ import { ref, computed, watch, onMounted } from 'vue';
+@@ -92,6 +96,12 @@
+                     <Icon icon="fluent:timer-16-regular" width="20px" height="20px" />
+                     <span class="ml-1">予約を追加</span>
+                 </v-btn>
++                <!-- シリーズ予約 (キーワード自動予約条件) の作成ボタン -->
++                <v-btn class="px-3" variant="text" :disabled="!isEDCBBackend" :loading="isCreatingSeries"
++                    @click="handleCreateSeriesReservation">
++                    <Icon icon="fluent:calendar-multiple-16-regular" width="20px" height="20px" />
++                    <span class="ml-1">シリーズ予約</span>
++                </v-btn>
+             </div>
+         </div>
+         <!-- 過去番組の場合は閉じるボタンのみ表示 -->
+@@ -190,11 +200,14 @@ import { ref, computed, watch, onMounted } from 'vue';
  import ReservationProgramInfo from '@/components/Reservations/ReservationProgramInfo.vue';
  import ReservationRecordingSettings from '@/components/Reservations/ReservationRecordingSettings.vue';
  import Message from '@/message';
 +import router from '@/router';
  import { type IChannel } from '@/services/Channels';
  import { type IProgram } from '@/services/Programs';
++import ReservationConditions from '@/services/ReservationConditions';
  import Reservations, { type IReservation, type IRecordSettings, type IRecordSettingsPresets } from '@/services/Reservations';
  import useServerSettingsStore from '@/stores/ServerSettingsStore';
 -import { ProgramUtils } from '@/utils';
@@ -26,7 +232,15 @@
  
  // Props
  const props = defineProps<{
-@@ -265,6 +271,17 @@ const hasRealReservation = computed(() => hasReservation.value && !isMockReserva
+@@ -239,6 +252,7 @@ const isSaving = ref(false);
+ 
+ // 予約追加中フラグ
+ const isAdding = ref(false);
++const isCreatingSeries = ref(false);
+ 
+ // 現在の録画設定
+ const currentSettings = ref<IRecordSettings | null>(null);
+@@ -265,6 +279,17 @@ const hasRealReservation = computed(() => hasReservation.value && !isMockReserva
  
  // 表示用の番組情報（予約があればそちらを優先）
  const displayProgram = computed(() => props.reservation?.program ?? props.program ?? null);
@@ -44,6 +258,50 @@
  
  // EDCB バックエンドかどうか
  // サーバー設定がまだ取得されていない場合は EDCB と判定しない
+@@ -398,6 +423,43 @@ const confirmDelete = async () => {
+     }
+ };
+ 
++// シリーズ予約 (キーワード自動予約条件) の作成処理
++// 番組名から話数表記などを除いたキーワード + 同じチャンネルの条件を作成し、以後は自動で予約されるようにする
++const handleCreateSeriesReservation = async () => {
++    if (isCreatingSeries.value || !displayProgram.value) return;
++
++    // EDCB バックエンドでない場合はエラー
++    if (!isEDCBBackend.value) {
++        Message.error('シリーズ予約は EDCB バックエンド選択時のみ利用できます。');
++        return;
++    }
++
++    isCreatingSeries.value = true;
++    try {
++        const recordSettings = currentSettings.value ?? props.reservation?.record_settings ??
++            await Reservations.fetchDefaultRecordSettings();
++        if (!recordSettings) {
++            Message.error('録画設定を取得できませんでした。');
++            return;
++        }
++        const program = displayProgram.value;
++        const source = {
++            title: program.title,
++            network_id: program.network_id,
++            service_id: program.service_id,
++            transport_stream_id: displayChannel.value?.transport_stream_id ?? 0,
++        };
++        const result = await ReservationConditions.addSeriesReservation(source, recordSettings);
++        if (result === 'created') {
++            Message.success(`シリーズ予約を作成しました。以後の「${ReservationConditions.buildSeriesSearchCondition(source).keyword}」は自動で予約されます。`);
++        } else if (result === 'duplicate') {
++            Message.show('このシリーズの自動予約はすでに作成されています。');
++        }
++    } finally {
++        isCreatingSeries.value = false;
++    }
++};
++
+ // 予約追加処理
+ // mock の予約に含まれる record_settings (ユーザーがカスタマイズ可能) を使用して追加
+ const handleAddReservation = async () => {
 --- a/client/src/components/TimeTable/TimeTableProgramCell.vue
 +++ b/client/src/components/TimeTable/TimeTableProgramCell.vue
 @@ -43,6 +43,11 @@
@@ -86,7 +344,7 @@
  const hasReservation = computed(() => {
      return props.program.reservation !== null;
  });
---- a/client/src/components/Videos/HighlightsDialog.vue
+--- a/client/src/components/TimeTable/TimeTableProgramCell.vue
 +++ b/client/src/components/Videos/HighlightsDialog.vue
 @@ -0,0 +1,200 @@
 +<template>
@@ -441,7 +699,7 @@
      &__content {
          display: flex;
          flex-direction: column;
---- a/client/src/components/Videos/RecordingResultsDialog.vue
+--- a/client/src/components/Videos/RecordedProgram.vue
 +++ b/client/src/components/Videos/RecordingResultsDialog.vue
 @@ -0,0 +1,162 @@
 +<template>
@@ -742,7 +1000,7 @@
      &__grid {
          display: grid;
          grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
---- a/client/src/components/Watch/Panel/CommentSearchDialog.vue
+--- a/client/src/components/Watch/Panel/ChapterListDialog.vue
 +++ b/client/src/components/Watch/Panel/CommentSearchDialog.vue
 @@ -0,0 +1,137 @@
 +<template>
@@ -884,7 +1142,7 @@
 +</style>
 --- a/client/src/components/Watch/Panel/RecordedProgram.vue
 +++ b/client/src/components/Watch/Panel/RecordedProgram.vue
-@@ -66,12 +66,30 @@
+@@ -66,12 +66,34 @@
                      <Icon icon="fluent:image-multiple-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
                      <span style="margin-left: 6px;">場面一覧</span>
                  </div>
@@ -906,6 +1164,10 @@
 +                    <Icon icon="fluent:calendar-clock-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
 +                    <span style="margin-left: 6px;">次回を予約</span>
 +                </div>
++                <div v-ripple class="program-info__button" @click="createSeriesReservation">
++                    <Icon icon="fluent:calendar-multiple-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
++                    <span style="margin-left: 6px;">シリーズ予約</span>
++                </div>
 +                <div v-ripple class="program-info__button"
 +                    :class="{'program-info__button--digest-active': sleep_timer_mode !== 'off'}"
 +                    @click="cycleSleepTimer">
@@ -915,7 +1177,7 @@
              </div>
          </section>
          <section class="program-detail-container">
-@@ -82,6 +100,7 @@
+@@ -82,6 +104,7 @@
              </div>
          </section>
          <ChapterListDialog :program="playerStore.recorded_program" v-model:show="show_chapter_list" />
@@ -923,7 +1185,7 @@
      </div>
  </template>
  <script lang="ts">
-@@ -90,7 +109,12 @@ import { mapStores } from 'pinia';
+@@ -90,7 +113,13 @@ import { mapStores } from 'pinia';
  import { defineComponent } from 'vue';
  
  import ChapterListDialog from '@/components/Watch/Panel/ChapterListDialog.vue';
@@ -932,11 +1194,12 @@
 +import Programs, { IProgramSearchCondition } from '@/services/Programs';
 +import Videos from '@/services/Videos';
 +import { formatPlaybackTime } from '@/services/CommentHighlights';
++import ReservationConditions from '@/services/ReservationConditions';
 +import Reservations from '@/services/Reservations';
  import usePlayerStore from '@/stores/PlayerStore';
  import useSettingsStore from '@/stores/SettingsStore';
  import Utils, { ProgramUtils } from '@/utils';
-@@ -99,6 +123,7 @@ export default defineComponent({
+@@ -99,6 +128,7 @@ export default defineComponent({
      name: 'Panel-RecordedProgramTab',
      components: {
          ChapterListDialog,
@@ -944,7 +1207,7 @@
      },
      data() {
          return {
-@@ -112,9 +137,22 @@ export default defineComponent({
+@@ -112,9 +142,25 @@ export default defineComponent({
              // 場面一覧ダイアログの表示状態
              show_chapter_list: false,
  
@@ -961,13 +1224,16 @@
 +            // 次回予約の実行中フラグ
 +            is_reserving_next: false,
 +
++            // シリーズ予約の実行中フラグ
++            is_creating_series: false,
++
 +            // おやすみタイマーの状態 (SleepTimerManager から SleepTimerStateChanged で通知される)
 +            sleep_timer_mode: 'off' as 'off' | 'minutes' | 'end',
 +            sleep_timer_remaining: null as number | null,
          };
      },
      computed: {
-@@ -126,6 +164,19 @@ export default defineComponent({
+@@ -126,6 +172,19 @@ export default defineComponent({
                  item.type === 'RecordedProgram' && item.id === this.playerStore.recorded_program.id
              );
          },
@@ -987,7 +1253,7 @@
      },
      methods: {
          // 指定された録画番組の視聴画面へ移動する (前の話・次の話ボタン用)
-@@ -133,10 +184,85 @@ export default defineComponent({
+@@ -133,10 +192,115 @@ export default defineComponent({
              if (program_id === null) return;
              this.$router.push({ path: `/videos/watch/${program_id}` });
          },
@@ -1070,10 +1336,40 @@
 +                this.is_reserving_next = false;
 +            }
 +        },
++        // シリーズ予約 (キーワード自動予約条件) を作成する。以後は同じシリーズが自動で予約される
++        async createSeriesReservation(): Promise<void> {
++            if (this.is_creating_series) {
++                return;
++            }
++            const program = this.playerStore.recorded_program;
++            const source = {
++                title: program.title,
++                series_title: program.series_title,
++                network_id: program.network_id,
++                service_id: program.service_id,
++                transport_stream_id: program.channel?.transport_stream_id ?? 0,
++            };
++            this.is_creating_series = true;
++            try {
++                const record_settings = await Reservations.fetchDefaultRecordSettings();
++                if (record_settings === null) {
++                    Message.show('録画設定を取得できませんでした。');
++                    return;
++                }
++                const result = await ReservationConditions.addSeriesReservation(source, record_settings);
++                if (result === 'created') {
++                    Message.show(`シリーズ予約を作成しました。以後の「${ReservationConditions.buildSeriesSearchCondition(source).keyword}」は自動で予約されます。`);
++                } else if (result === 'duplicate') {
++                    Message.show('このシリーズの自動予約はすでに作成されています。');
++                }
++            } finally {
++                this.is_creating_series = false;
++            }
++        },
          // マイリストの追加/削除を切り替える
          toggleMylist(): void {
              const program = this.playerStore.recorded_program;
-@@ -156,6 +282,12 @@ export default defineComponent({
+@@ -156,6 +320,12 @@ export default defineComponent({
              }
          },
      },
@@ -1086,7 +1382,7 @@
      created() {
          // PlayerController 側からCommentReceived イベントで過去ログコメントを受け取り、コメント数を算出する
          this.playerStore.event_emitter.on('CommentReceived', (event) => {
-@@ -168,11 +300,17 @@ export default defineComponent({
+@@ -168,11 +338,17 @@ export default defineComponent({
              this.digest_available = state.available;
              this.digest_active = state.active;
          });
@@ -1104,7 +1400,7 @@
      },
  });
  
-@@ -308,6 +446,7 @@ export default defineComponent({
+@@ -308,6 +484,7 @@ export default defineComponent({
              align-items: center;
              padding: 5px 8px;
              margin-top: 16px;
@@ -1126,7 +1422,22 @@
          {
              path: '/videos/watch/:video_id',
              name: 'Videos Watch',
---- a/client/src/services/CommentHighlights.ts
+@@ -62,12 +67,11 @@ const router = createRouter({
+         {
+             path: '/reservations/',
+             name: 'Reservations',
+-            component: () => import('@/views/Reservations/Home.vue'),
++            component: () => import('@/views/Reservations/Reservations.vue'),
+         },
+         {
+             path: '/reservations/all',
+-            name: 'Reservations All',
+-            component: () => import('@/views/Reservations/Reservations.vue'),
++            redirect: '/reservations/',
+         },
+         {
+             path: '/mylist/',
+--- a/client/src/router/index.ts
 +++ b/client/src/services/CommentHighlights.ts
 @@ -0,0 +1,161 @@
 +import Videos, { IJikkyoComment } from '@/services/Videos';
@@ -1290,7 +1601,7 @@
 +    }
 +    return `${minutes}:${secs.toString().padStart(2, '0')}`;
 +}
---- a/client/src/services/HighlightReel.ts
+--- a/client/src/services/CommentHighlights.ts
 +++ b/client/src/services/HighlightReel.ts
 @@ -0,0 +1,68 @@
 +/**
@@ -1361,6 +1672,107 @@
 +export function clearHighlightReel(): void {
 +    sessionStorage.removeItem(STORAGE_KEY);
 +}
+--- a/client/src/services/ReservationConditions.ts
++++ b/client/src/services/ReservationConditions.ts
+@@ -39,6 +39,18 @@ export interface IReservationConditionUpdateRequest {
+ }
+ 
+ 
++/**
++ * シリーズ予約の元になる番組情報 (タイトルとチャンネルの識別子のみを使う)
++ */
++export interface ISeriesProgramSource {
++    title: string;
++    series_title?: string | null;
++    network_id: number | null;
++    service_id: number | null;
++    transport_stream_id: number | null;
++}
++
++
+ /**
+  * キーワード自動予約条件に関する API 操作を提供するクラス
+  */
+@@ -194,6 +206,79 @@ class ReservationConditions {
+ 
+         return true;
+     }
++    /**
++     * 番組情報からシリーズ予約 (キーワード自動予約) 用の検索条件を組み立てる
++     * キーワードは「次回を予約」と同じ正規化 ([字] などのマークと話数表記を除去) を行い、チャンネルは番組のものに固定する
++     * @param program 元になる番組情報
++     * @returns 番組検索条件
++     */
++    static buildSeriesSearchCondition(program: ISeriesProgramSource): IProgramSearchCondition {
++        const keyword = (program.series_title || program.title)
++            .replace(/\[[^\]]*\]/g, '')
++            .replace(/#\s*\d+/g, '')
++            .replace(/第\s*\d+\s*[話回]/g, '')
++            .replace(/\s+/g, ' ')
++            .trim() || program.title;
++        return {
++            is_enabled: true,
++            keyword,
++            exclude_keyword: '',
++            note: '',
++            is_title_only: true,
++            is_case_sensitive: false,
++            is_fuzzy_search_enabled: false,
++            is_regex_search_enabled: false,
++            service_ranges: (program.network_id !== null && program.service_id !== null) ? [{
++                network_id: program.network_id,
++                transport_stream_id: program.transport_stream_id ?? 0,
++                service_id: program.service_id,
++            }] : null,
++            genre_ranges: null,
++            is_exclude_genre_ranges: false,
++            date_ranges: null,
++            is_exclude_date_ranges: false,
++            duration_range_min: null,
++            duration_range_max: null,
++            broadcast_type: 'All',
++            duplicate_title_check_scope: 'None',
++            duplicate_title_check_period_days: 6,
++        };
++    }
++
++    /**
++     * シリーズ予約 (キーワード自動予約条件) を追加する
++     * 同じキーワード + 同じチャンネルの条件が既にある場合は追加しない
++     * @param program 元になる番組情報
++     * @param record_settings 録画設定
++     * @returns 作成した場合は 'created'、既に存在する場合は 'duplicate'、失敗した場合は 'failed'
++     */
++    static async addSeriesReservation(
++        program: ISeriesProgramSource,
++        record_settings: IRecordSettings
++    ): Promise<'created' | 'duplicate' | 'failed'> {
++        const condition = ReservationConditions.buildSeriesSearchCondition(program);
++        const existing = await ReservationConditions.fetchReservationConditions();
++        if (existing !== null) {
++            const is_duplicate = existing.reservation_conditions.some((existing_condition) => {
++                const existing_search = existing_condition.program_search_condition;
++                if (existing_search.keyword !== condition.keyword) {
++                    return false;
++                }
++                const existing_range = existing_search.service_ranges?.[0] ?? null;
++                const new_range = condition.service_ranges?.[0] ?? null;
++                if (existing_range === null || new_range === null) {
++                    return existing_range === new_range;
++                }
++                return existing_range.network_id === new_range.network_id &&
++                    existing_range.service_id === new_range.service_id;
++            });
++            if (is_duplicate) {
++                return 'duplicate';
++            }
++        }
++        const success = await ReservationConditions.addReservationCondition(condition, record_settings);
++        return success ? 'created' : 'failed';
++    }
+ }
+ 
+ export default ReservationConditions;
 --- a/client/src/services/Videos.ts
 +++ b/client/src/services/Videos.ts
 @@ -114,6 +114,29 @@ export const IRecordedVideoDefault: IRecordedVideo = {
@@ -1657,7 +2069,7 @@
                  player_store.event_emitter.emit('PlayerRestartRequired', {
                      message: 'Wi-Fi 回線向けの画質プロファイルに切り替えました。',
                      // 他の通知と被らないように、メッセージを遅らせて表示する
---- a/client/src/services/player/SleepTimerState.ts
+--- a/client/src/services/player/PlayerController.ts
 +++ b/client/src/services/player/SleepTimerState.ts
 @@ -0,0 +1,8 @@
 +/**
@@ -1668,7 +2080,7 @@
 +    // true の場合、録画の再生終了時に次の話を自動再生せず、そのまま停止する
 +    stop_at_end: false,
 +};
---- a/client/src/services/player/managers/AutoPlayNextManager.ts
+--- a/client/src/services/player/SleepTimerState.ts
 +++ b/client/src/services/player/managers/AutoPlayNextManager.ts
 @@ -0,0 +1,184 @@
 +import DPlayer from 'dplayer';
@@ -1855,7 +2267,7 @@
 +}
 +
 +export default AutoPlayNextManager;
---- a/client/src/services/player/managers/ChasePlaybackManager.ts
+--- a/client/src/services/player/managers/AutoPlayNextManager.ts
 +++ b/client/src/services/player/managers/ChasePlaybackManager.ts
 @@ -0,0 +1,217 @@
 +import DPlayer from 'dplayer';
@@ -2075,7 +2487,7 @@
 +}
 +
 +export default ChasePlaybackManager;
---- a/client/src/services/player/managers/HighlightReelManager.ts
+--- a/client/src/services/player/managers/ChasePlaybackManager.ts
 +++ b/client/src/services/player/managers/HighlightReelManager.ts
 @@ -0,0 +1,210 @@
 +import DPlayer from 'dplayer';
@@ -2318,7 +2730,7 @@
          play_icon.after(forward_small, forward_large);
          this.buttons = [back_large, back_small, forward_small, forward_large];
  
---- a/client/src/services/player/managers/SleepTimerManager.ts
+--- a/client/src/services/player/managers/SeekControlManager.ts
 +++ b/client/src/services/player/managers/SleepTimerManager.ts
 @@ -0,0 +1,176 @@
 +import DPlayer from 'dplayer';
@@ -2497,7 +2909,7 @@
 +}
 +
 +export default SleepTimerManager;
---- a/client/src/services/player/managers/WatchedReportManager.ts
+--- a/client/src/services/player/managers/SleepTimerManager.ts
 +++ b/client/src/services/player/managers/WatchedReportManager.ts
 @@ -0,0 +1,99 @@
 +import DPlayer from 'dplayer';
@@ -2642,7 +3054,7 @@
      // tv_streaming_quality: 同期無効
      // tv_streaming_quality_cellular: 同期無効
      // tv_data_saver_mode: 同期無効
---- a/client/src/utils/ProgramWatch.ts
+--- a/client/src/stores/SettingsStore.ts
 +++ b/client/src/utils/ProgramWatch.ts
 @@ -0,0 +1,38 @@
 +import { computed, onScopeDispose, ref, watch } from 'vue';
@@ -2683,6 +3095,64 @@
 +    });
 +    return computed(() => active() ? GetProgramWatchPath(program(), channel(), now.value) : null);
 +}
+--- a/client/src/views/Reservations/Reservations.vue
++++ b/client/src/views/Reservations/Reservations.vue
+@@ -8,9 +8,15 @@
+                 <div class="reservations-all-container">
+                     <Breadcrumbs :crumbs="[
+                         { name: 'ホーム', path: '/' },
+-                        { name: '録画予約', path: '/reservations/' },
+-                        { name: '録画予約一覧', path: '/reservations/all', disabled: true },
++                        { name: '録画予約一覧', path: '/reservations/', disabled: true },
+                     ]" />
++                    <div class="reservations-all-container__actions">
++                        <div v-ripple class="reservations-all-container__action" @click="show_conditions_dialog = true">
++                            <Icon icon="fluent:calendar-multiple-16-filled" width="18px" height="18px" />
++                            <span>自動予約の条件</span>
++                        </div>
++                    </div>
++                    <ReservationConditionsDialog v-model:show="show_conditions_dialog" />
+                     <ReservationList ref="reservationList"
+                         title="録画予約一覧"
+                         :reservations="reservations"
+@@ -37,6 +43,7 @@ import { useRoute, useRouter } from 'vue-router';
+ import Breadcrumbs from '@/components/Breadcrumbs.vue';
+ import HeaderBar from '@/components/HeaderBar.vue';
+ import Navigation from '@/components/Navigation.vue';
++import ReservationConditionsDialog from '@/components/Reservations/ReservationConditionsDialog.vue';
+ import ReservationList from '@/components/Reservations/ReservationList.vue';
+ import SPHeaderBar from '@/components/SPHeaderBar.vue';
+ import Reservations, { IReservation } from '@/services/Reservations';
+@@ -45,6 +52,9 @@ const route = useRoute();
+ const router = useRouter();
+ 
+ // 録画予約リスト
++// 自動予約の条件ダイアログの表示状態
++const show_conditions_dialog = ref(false);
++
+ const reservations = ref<IReservation[]>([]);
+ // 全体の録画予約数
+ const total = ref<number>(0);
+@@ -252,4 +262,18 @@ onUnmounted(() => {
+     }
+ }
+ 
++.reservations-all-container__actions {
++    display: flex;
++    margin-top: 12px;
++}
++.reservations-all-container__action {
++    display: inline-flex;
++    align-items: center;
++    gap: 6px;
++    padding: 8px 14px;
++    border-radius: 9999px;
++    background: rgb(var(--v-theme-background-lighten-1));
++    cursor: pointer;
++    font-size: 14px;
++}
+ </style>
+\ No newline at end of file
 --- a/client/src/views/Videos/Home.vue
 +++ b/client/src/views/Videos/Home.vue
 @@ -10,6 +10,13 @@
@@ -2886,9 +3356,9 @@
 +}
 +
  </style>
---- a/client/src/views/Videos/Trash.vue
+--- a/client/src/views/Videos/Programs.vue
 +++ b/client/src/views/Videos/Trash.vue
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,262 @@
 +<template>
 +    <div class="route-container">
 +        <HeaderBar />
@@ -2899,11 +3369,12 @@
 +                <div class="recorded-programs-container">
 +                    <Breadcrumbs :crumbs="[
 +                        { name: 'ホーム', path: '/' },
-+                        { name: 'ビデオをみる', path: '/videos/' },
++                        { name: 'ビデオをみる', path: '/videos/programs' },
 +                        { name: 'ゴミ箱', path: '/videos/trash', disabled: true },
 +                    ]" />
 +                    <h1 class="trash-title">ゴミ箱</h1>
 +                    <p class="trash-note">ゴミ箱に移動した録画は {{ retention_days }} 日間保持され、期間を過ぎると自動的に完全に削除されます。</p>
++                    <v-btn class="trash-back-button" variant="outlined" prepend-icon="fluent:arrow-left-16-regular" to="/videos/programs">録画一覧に戻る</v-btn>
 +                    <div v-if="is_loading" class="trash-empty">読み込み中です…</div>
 +                    <div v-else-if="items.length === 0" class="trash-empty">ゴミ箱は空です</div>
 +                    <div v-else class="trash-list">
@@ -3077,6 +3548,10 @@
 +    font-size: 22px;
 +    font-weight: 700;
 +    margin-top: 8px;
++}
++
++.trash-back-button {
++    margin-top: 12px;
 +}
 +
 +.trash-note {
@@ -3565,7 +4040,7 @@
  # ***** シリーズ *****
  
  class Series(PydanticModel):
---- a/server/app/utils/Bookmarks.py
+--- a/server/app/schemas.py
 +++ b/server/app/utils/Bookmarks.py
 @@ -0,0 +1,90 @@
 +"""録画のしおり (ブックマーク) のサーバー側管理。
@@ -3658,7 +4133,7 @@
 +        if video_id in state:
 +            del state[video_id]
 +            _saveState(state)
---- a/server/app/utils/RecordingResults.py
+--- a/server/app/utils/Bookmarks.py
 +++ b/server/app/utils/RecordingResults.py
 @@ -0,0 +1,202 @@
 +"""録画結果 (成功 / 一部のみ / 失敗) の記録。
@@ -3863,7 +4338,7 @@
 +def listResults() -> list[dict]:
 +    """記録済みの録画結果を新しい順で返す。"""
 +    return _loadState()['results']
---- a/server/app/utils/RecordingTrash.py
+--- a/server/app/utils/RecordingResults.py
 +++ b/server/app/utils/RecordingTrash.py
 @@ -0,0 +1,135 @@
 +"""録画のゴミ箱 (削除の猶予期間) の状態管理と、期限切れ録画の自動削除。
@@ -4001,7 +4476,7 @@
 +        except Exception:
 +            logging.exception(f'[RecordingTrash] Failed to purge trashed video_id {video_id}. Postponed by 1 day.')
 +            _postpone(video_id, 1)
---- a/server/app/utils/WatchedState.py
+--- a/server/app/utils/RecordingTrash.py
 +++ b/server/app/utils/WatchedState.py
 @@ -0,0 +1,69 @@
 +"""録画の視聴状態 (どこまで見たか) のサーバー側管理。

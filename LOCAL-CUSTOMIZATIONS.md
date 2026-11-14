@@ -455,3 +455,26 @@ EPGStation は終了した予約と失敗した録画を DB に残さないた�
 ### 検証（2026-11-15）
 
 素の v0.14.1 に6バンドルを順に適用したツリーが、本番の client/src と server/app の全ファイルと一致することを確認した（しおり・録画結果は API の往復テストも実施）。
+
+
+## 2026-11-15 追加分（シリーズ予約・録画予約一覧の直接表示・ゴミ箱の戻るボタン）
+
+### シリーズ予約（キーワード自動予約）（recorder-features に収録）
+
+連ドラの予約が都度予約にしかならない問題への対応。仕組み自体（KonomiTV の自動予約条件 API → EDCB AutoAdd → edcb-bridge → EPGStation ルール）は配管済みだったが、クライアントに条件を作る UI が無かった。入口は2か所：視聴画面の番組情報パネル（「次回を予約」の隣）と予約詳細ドロワーのフッター。条件は「次回を予約」と同じキーワード正規化（series_title 優先、[字] 等のマークと話数表記を除去）＋番組のチャンネル固定で、`ReservationConditions.addSeriesReservation` が重複チェック（同じキーワード＋同じチャンネル）付きで作成する。管理は録画予約一覧の「自動予約の条件」ボタンから開くダイアログ（一覧と削除のみ。条件を消しても作成済みの予約は残る）。
+
+### edcb-bridge の修正（KonomiTV 本体ではなく連携側）
+
+シリーズ予約の検証で発覚：自動予約条件を作っても EPGStation 側で予約が1件も生成されなかった。原因は edcb-bridge (venv311 の site-packages、`edcb_bridge/backends/epgstation.py` の `_auto_add_to_rule`) が EPGStation ルールの `searchOption.ignoreKeyword` に常に空文字を入れていたこと。EPGStation の ProgramDB は ignoreKeyword が「未定義でない」だけで `NOT (halfWidthName LIKE '%%')` という全件除外の条件を組み立てる。かといって項目を省くと `ignoreName: true` が ReserveOptionChecker の検査（キーワード未定義なら対象フラグは全て false でなければならない）に弾かれて AddRuleError になる。修正は、除外キーワードが空なら ignoreKeyword を省き、ignoreKeyCS / ignoreKeyRegExp / ignoreName / ignoreDescription / ignoreExtended をすべて false にすること。旧ファイルは同フォルダに `epgstation.py.bak-20261115` として保全。修正後に実測：条件作成→ルール生成→一致する23件すべての予約が「EPG自動予約」として作成され、条件削除でルールと予約が消えることを確認した。なお bridge の再インストール時はこの修正の再適用が必要。
+
+### 録画予約一覧の直接表示（recorder-features に収録）
+
+「録画予約」を開くと「放送が近い録画予約」（24時間以内＋録画中のみ抜粋）がまず出るのが分かりにくいため、/reservations/ 自体を録画予約一覧に変更し、/reservations/all は /reservations/ へのリダイレクトにした。旧 Reservations/Home.vue は未使用として残置。
+
+### ゴミ箱の戻るボタン（recorder-features に収録）
+
+ゴミ箱から録画一覧へ戻る導線がパンくずのみだったため、説明文の下に「録画一覧に戻る」ボタンを追加した。
+
+### 検証（2026-11-15）
+
+素の v0.14.1 に6バンドルを順に適用したツリーが、本番の client/src と server/app の全ファイルと一致することを確認した。シリーズ予約は API の往復テスト（条件作成→EPGStation ルール→予約23件生成→条件削除→ルール・予約の消去）まで実施。
