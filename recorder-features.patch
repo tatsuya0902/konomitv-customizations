@@ -258,7 +258,22 @@
  
  // EDCB バックエンドかどうか
  // サーバー設定がまだ取得されていない場合は EDCB と判定しない
-@@ -398,6 +423,43 @@ const confirmDelete = async () => {
+@@ -351,6 +376,14 @@ const handleUpdateSettings = (newSettings: IRecordSettings) => {
+ const handleSave = async () => {
+     if (!hasChanges.value || isSaving.value || !currentSettings.value || !props.reservation) return;
+ 
++    // 手動予約の無効化は EPGStation 側に対応する状態がないため、保存せずに案内する
++    // (キーワード自動予約で作成された予約は無効化できる)
++    if (currentSettings.value.is_enabled === false && props.reservation.record_settings.is_enabled === true &&
++        isKeywordAutoReservation.value === false) {
++        Message.error('手動予約は無効化できません。予約を取りやめる場合は「予約を削除」を使ってください。');
++        return;
++    }
++
+     // バリデーションチェック
+     const captionIsDefault = currentSettings.value.caption_recording_mode === 'Default';
+     const dataBroadcastingIsDefault = currentSettings.value.data_broadcasting_recording_mode === 'Default';
+@@ -398,6 +431,43 @@ const confirmDelete = async () => {
      }
  };
  
@@ -344,7 +359,7 @@
  const hasReservation = computed(() => {
      return props.program.reservation !== null;
  });
---- a/client/src/components/TimeTable/TimeTableProgramCell.vue
+--- a/client/src/components/Videos/HighlightsDialog.vue
 +++ b/client/src/components/Videos/HighlightsDialog.vue
 @@ -0,0 +1,200 @@
 +<template>
@@ -699,7 +714,7 @@
      &__content {
          display: flex;
          flex-direction: column;
---- a/client/src/components/Videos/RecordedProgram.vue
+--- a/client/src/components/Videos/RecordingResultsDialog.vue
 +++ b/client/src/components/Videos/RecordingResultsDialog.vue
 @@ -0,0 +1,162 @@
 +<template>
@@ -1000,7 +1015,7 @@
      &__grid {
          display: grid;
          grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
---- a/client/src/components/Watch/Panel/ChapterListDialog.vue
+--- a/client/src/components/Watch/Panel/CommentSearchDialog.vue
 +++ b/client/src/components/Watch/Panel/CommentSearchDialog.vue
 @@ -0,0 +1,137 @@
 +<template>
@@ -1437,7 +1452,7 @@
          },
          {
              path: '/mylist/',
---- a/client/src/router/index.ts
+--- a/client/src/services/CommentHighlights.ts
 +++ b/client/src/services/CommentHighlights.ts
 @@ -0,0 +1,161 @@
 +import Videos, { IJikkyoComment } from '@/services/Videos';
@@ -1601,7 +1616,7 @@
 +    }
 +    return `${minutes}:${secs.toString().padStart(2, '0')}`;
 +}
---- a/client/src/services/CommentHighlights.ts
+--- a/client/src/services/HighlightReel.ts
 +++ b/client/src/services/HighlightReel.ts
 @@ -0,0 +1,68 @@
 +/**
@@ -2069,7 +2084,7 @@
                  player_store.event_emitter.emit('PlayerRestartRequired', {
                      message: 'Wi-Fi 回線向けの画質プロファイルに切り替えました。',
                      // 他の通知と被らないように、メッセージを遅らせて表示する
---- a/client/src/services/player/PlayerController.ts
+--- a/client/src/services/player/SleepTimerState.ts
 +++ b/client/src/services/player/SleepTimerState.ts
 @@ -0,0 +1,8 @@
 +/**
@@ -2080,7 +2095,7 @@
 +    // true の場合、録画の再生終了時に次の話を自動再生せず、そのまま停止する
 +    stop_at_end: false,
 +};
---- a/client/src/services/player/SleepTimerState.ts
+--- a/client/src/services/player/managers/AutoPlayNextManager.ts
 +++ b/client/src/services/player/managers/AutoPlayNextManager.ts
 @@ -0,0 +1,184 @@
 +import DPlayer from 'dplayer';
@@ -2267,7 +2282,7 @@
 +}
 +
 +export default AutoPlayNextManager;
---- a/client/src/services/player/managers/AutoPlayNextManager.ts
+--- a/client/src/services/player/managers/ChasePlaybackManager.ts
 +++ b/client/src/services/player/managers/ChasePlaybackManager.ts
 @@ -0,0 +1,217 @@
 +import DPlayer from 'dplayer';
@@ -2487,7 +2502,7 @@
 +}
 +
 +export default ChasePlaybackManager;
---- a/client/src/services/player/managers/ChasePlaybackManager.ts
+--- a/client/src/services/player/managers/HighlightReelManager.ts
 +++ b/client/src/services/player/managers/HighlightReelManager.ts
 @@ -0,0 +1,210 @@
 +import DPlayer from 'dplayer';
@@ -2730,7 +2745,7 @@
          play_icon.after(forward_small, forward_large);
          this.buttons = [back_large, back_small, forward_small, forward_large];
  
---- a/client/src/services/player/managers/SeekControlManager.ts
+--- a/client/src/services/player/managers/SleepTimerManager.ts
 +++ b/client/src/services/player/managers/SleepTimerManager.ts
 @@ -0,0 +1,176 @@
 +import DPlayer from 'dplayer';
@@ -2909,7 +2924,7 @@
 +}
 +
 +export default SleepTimerManager;
---- a/client/src/services/player/managers/SleepTimerManager.ts
+--- a/client/src/services/player/managers/WatchedReportManager.ts
 +++ b/client/src/services/player/managers/WatchedReportManager.ts
 @@ -0,0 +1,99 @@
 +import DPlayer from 'dplayer';
@@ -3054,7 +3069,7 @@
      // tv_streaming_quality: 同期無効
      // tv_streaming_quality_cellular: 同期無効
      // tv_data_saver_mode: 同期無効
---- a/client/src/stores/SettingsStore.ts
+--- a/client/src/utils/ProgramWatch.ts
 +++ b/client/src/utils/ProgramWatch.ts
 @@ -0,0 +1,38 @@
 +import { computed, onScopeDispose, ref, watch } from 'vue';
@@ -3356,9 +3371,9 @@
 +}
 +
  </style>
---- a/client/src/views/Videos/Programs.vue
+--- a/client/src/views/Videos/Trash.vue
 +++ b/client/src/views/Videos/Trash.vue
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,257 @@
 +<template>
 +    <div class="route-container">
 +        <HeaderBar />
@@ -3374,7 +3389,6 @@
 +                    ]" />
 +                    <h1 class="trash-title">ゴミ箱</h1>
 +                    <p class="trash-note">ゴミ箱に移動した録画は {{ retention_days }} 日間保持され、期間を過ぎると自動的に完全に削除されます。</p>
-+                    <v-btn class="trash-back-button" variant="outlined" prepend-icon="fluent:arrow-left-16-regular" to="/videos/programs">録画一覧に戻る</v-btn>
 +                    <div v-if="is_loading" class="trash-empty">読み込み中です…</div>
 +                    <div v-else-if="items.length === 0" class="trash-empty">ゴミ箱は空です</div>
 +                    <div v-else class="trash-list">
@@ -3548,10 +3562,6 @@
 +    font-size: 22px;
 +    font-weight: 700;
 +    margin-top: 8px;
-+}
-+
-+.trash-back-button {
-+    margin-top: 12px;
 +}
 +
 +.trash-note {
@@ -4040,7 +4050,7 @@
  # ***** シリーズ *****
  
  class Series(PydanticModel):
---- a/server/app/schemas.py
+--- a/server/app/utils/Bookmarks.py
 +++ b/server/app/utils/Bookmarks.py
 @@ -0,0 +1,90 @@
 +"""録画のしおり (ブックマーク) のサーバー側管理。
@@ -4133,7 +4143,7 @@
 +        if video_id in state:
 +            del state[video_id]
 +            _saveState(state)
---- a/server/app/utils/Bookmarks.py
+--- a/server/app/utils/RecordingResults.py
 +++ b/server/app/utils/RecordingResults.py
 @@ -0,0 +1,202 @@
 +"""録画結果 (成功 / 一部のみ / 失敗) の記録。
@@ -4338,7 +4348,7 @@
 +def listResults() -> list[dict]:
 +    """記録済みの録画結果を新しい順で返す。"""
 +    return _loadState()['results']
---- a/server/app/utils/RecordingResults.py
+--- a/server/app/utils/RecordingTrash.py
 +++ b/server/app/utils/RecordingTrash.py
 @@ -0,0 +1,135 @@
 +"""録画のゴミ箱 (削除の猶予期間) の状態管理と、期限切れ録画の自動削除。
@@ -4476,7 +4486,7 @@
 +        except Exception:
 +            logging.exception(f'[RecordingTrash] Failed to purge trashed video_id {video_id}. Postponed by 1 day.')
 +            _postpone(video_id, 1)
---- a/server/app/utils/RecordingTrash.py
+--- a/server/app/utils/WatchedState.py
 +++ b/server/app/utils/WatchedState.py
 @@ -0,0 +1,69 @@
 +"""録画の視聴状態 (どこまで見たか) のサーバー側管理。
