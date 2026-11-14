@@ -936,7 +936,7 @@
 +</style>
 --- a/client/src/components/Watch/Panel/ChapterListDialog.vue
 +++ b/client/src/components/Watch/Panel/ChapterListDialog.vue
-@@ -10,6 +10,28 @@
+@@ -10,6 +10,37 @@
                  </div>
              </v-card-title>
              <div class="px-5 pb-6">
@@ -953,6 +953,15 @@
 +                        </div>
 +                    </div>
 +                </div>
++                <div v-if="cm_sections.length > 0" class="chapter-list__highlights">
++                    <div class="chapter-list__highlights-title">CM区間</div>
++                    <div v-for="(section, index) in cm_sections" :key="index" v-ripple class="chapter-list__highlight-item"
++                        @click="seekTo(section.start_time)">
++                        <Icon icon="fluent:megaphone-16-filled" width="16px" height="16px" style="color: #6cb2f5; flex-shrink: 0;" />
++                        <span class="chapter-list__highlight-time">{{formatPlaybackTime(section.start_time)}} 〜 {{formatPlaybackTime(section.end_time)}}</span>
++                        <span class="chapter-list__highlight-count">{{Math.round(section.end_time - section.start_time)}} 秒</span>
++                    </div>
++                </div>
 +                <div v-if="highlight_segments.length > 0" class="chapter-list__highlights">
 +                    <div class="chapter-list__highlights-title">見どころ（コメントの盛り上がり）</div>
 +                    <div v-for="(segment, index) in highlight_segments" :key="index" v-ripple class="chapter-list__highlight-item"
@@ -965,7 +974,7 @@
                  <div v-if="chapters.length === 0" class="py-6 text-center">場面サムネイルがまだ生成されていません</div>
                  <div v-else class="chapter-list__grid">
                      <div v-for="chapter in chapters" :key="chapter.time" v-ripple class="chapter-list__item" @click="seekTo(chapter.time)">
-@@ -26,7 +48,8 @@
+@@ -26,7 +57,8 @@
  import { mapStores } from 'pinia';
  import { defineComponent, PropType } from 'vue';
  
@@ -975,7 +984,7 @@
  import usePlayerStore from '@/stores/PlayerStore';
  import Utils from '@/utils';
  
-@@ -44,6 +67,39 @@ export default defineComponent({
+@@ -44,8 +76,45 @@ export default defineComponent({
          },
      },
      emits: ['update:show'],
@@ -1014,8 +1023,14 @@
 +    },
      computed: {
          ...mapStores(usePlayerStore),
++        // CM 区間 (サーバー側で .chapter.txt から取り込まれたものが API 経由で渡される)
++        cm_sections(): { start_time: number; end_time: number }[] {
++            return this.program.recorded_video.cm_sections ?? [];
++        },
          chapters(): { time: number; label: string; style: Record<string, string> }[] {
-@@ -76,6 +132,11 @@ export default defineComponent({
+             const tile = this.program.recorded_video.thumbnail_info?.tile;
+             if (!tile || tile.total_tiles === 0) {
+@@ -76,6 +145,11 @@ export default defineComponent({
              this.playerStore.event_emitter.emit('SeekRequest', { playback_position: time });
              this.$emit('update:show', false);
          },
@@ -1027,7 +1042,7 @@
      },
  });
  
-@@ -94,6 +155,42 @@ function formatTime(seconds: number): string {
+@@ -94,6 +168,42 @@ function formatTime(seconds: number): string {
  <style lang="scss" scoped>
  
  .chapter-list {
@@ -2087,7 +2102,64 @@
      /**
       * ライブ視聴: 許容する HTMLMediaElement の内部再生バッファの秒数
       */
-@@ -997,6 +1036,7 @@ class PlayerController {
+@@ -975,6 +1014,56 @@ class PlayerController {
+             this.player?.notice('プレイヤーを再起動しました。', undefined, undefined, undefined);
+         });
+ 
++        // 前/次チャプターボタンを DPlayer の UI に追加する (録画再生時かつ CM 区間がある場合のみ)
++        // レコーダーのチャプターボタンと同様に、CM 区間の境目 (本編/CM の切り替わり) を移動する
++        const cm_sections = player_store.recorded_program?.recorded_video?.cm_sections;
++        if (this.playback_mode === 'Video' && cm_sections && cm_sections.length > 0) {
++            const chapter_boundaries = [...new Set(cm_sections.flatMap((section) => [section.start_time, section.end_time]))].sort((a, b) => a - b);
++            const left_icons = this.player.container.querySelector('.dplayer-icons.dplayer-icons-left');
++            if (left_icons !== null) {
++                left_icons.insertAdjacentHTML('beforeend', `
++                    <div class="dplayer-icon dplayer-prev-chapter-icon" aria-label="前のチャプターへ"
++                        data-balloon-nofocus="" data-balloon-pos="up">
++                        <span class="dplayer-icon-content">
++                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
++                        </span>
++                    </div>
++                    <div class="dplayer-icon dplayer-next-chapter-icon" aria-label="次のチャプターへ"
++                        data-balloon-nofocus="" data-balloon-pos="up">
++                        <span class="dplayer-icon-content">
++                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6h2v12h-2z"/></svg>
++                        </span>
++                    </div>
++                `);
++                this.player.container.querySelector('.dplayer-next-chapter-icon')!.addEventListener('click', () => {
++                    if (this.destroyed === true || this.player === null) return;
++                    const position = this.player.video.currentTime;
++                    const target = chapter_boundaries.find((boundary) => boundary > position + 0.5);
++                    if (target === undefined) {
++                        this.player.notice('この先にチャプターはありません');
++                        return;
++                    }
++                    this.player.seek(target);
++                    this.player.play();
++                });
++                this.player.container.querySelector('.dplayer-prev-chapter-icon')!.addEventListener('click', () => {
++                    if (this.destroyed === true || this.player === null) return;
++                    const position = this.player.video.currentTime;
++                    const prevs = chapter_boundaries.filter((boundary) => boundary < position - 0.5);
++                    if (prevs.length === 0) {
++                        this.player.seek(0);
++                        this.player.play();
++                        return;
++                    }
++                    // 境目を3秒以上過ぎていればその境目へ、そうでなければ1つ前の境目へ (レコーダーのチャプター戻しと同じ挙動)
++                    const last = prevs[prevs.length - 1];
++                    const target = (position - last > 3 || prevs.length < 2) ? last : prevs[prevs.length - 2];
++                    this.player.seek(target);
++                    this.player.play();
++                });
++            }
++        }
++
+         // Screen Wake Lock API を利用して画面の自動スリープを抑制する
+         // 待つ必要はないので非同期で実行
+         if ('wakeLock' in navigator) {
+@@ -997,6 +1086,7 @@ class PlayerController {
                  new DocumentPiPManager(this.player, this.playback_mode),
                  new KeyboardShortcutManager(this.player, this.playback_mode),
                  new MediaSessionManager(this.player, this.playback_mode),
@@ -2095,7 +2167,7 @@
              ];
          } else {
              // ビデオ視聴時に設定する PlayerManager
-@@ -1007,6 +1047,11 @@ class PlayerController {
+@@ -1007,6 +1097,11 @@ class PlayerController {
                  new MediaSessionManager(this.player, this.playback_mode),
                  new SeekControlManager(this.player, this.playback_mode),
                  new ExcitementManager(this.player, this.playback_mode),
@@ -2107,7 +2179,7 @@
              ];
          }
  
-@@ -1489,6 +1534,13 @@ class PlayerController {
+@@ -1489,6 +1584,13 @@ class PlayerController {
          // 画質切り替え開始時のイベント
          this.player.on('quality_start', on_init_or_quality_change);
  
@@ -2121,7 +2193,7 @@
          // 動画の統計情報の表示/非表示を切り替える隠しコマンドのイベントハンドラーを登録
          // iOS / iPadOS Safari では DPlayer 側の contextmenu が長押ししても発火しないため、代替の表示手段として用意
          // 番組情報タブ内の NEXT >> を 500ms 以内に3回連続でタップすると統計情報の表示/非表示が切り替わる
-@@ -1732,6 +1784,8 @@ class PlayerController {
+@@ -1732,6 +1834,8 @@ class PlayerController {
              if (toggle_mobile_profile_input.checked) {
                  this.quality_profile_type = 'Cellular';
                  player_store.selected_quality_profile_type = this.quality_profile_type;
@@ -2130,7 +2202,7 @@
                  player_store.event_emitter.emit('PlayerRestartRequired', {
                      message: 'モバイル回線向けの画質プロファイルに切り替えました。',
                      // 他の通知と被らないように、メッセージを遅らせて表示する
-@@ -1744,6 +1798,8 @@ class PlayerController {
+@@ -1744,6 +1848,8 @@ class PlayerController {
              } else {
                  this.quality_profile_type = 'Wi-Fi';
                  player_store.selected_quality_profile_type = this.quality_profile_type;
