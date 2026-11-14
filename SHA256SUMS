@@ -27,3 +27,4 @@ e2a1722b2ada7d1ef2ce8c54a0262840ec362b6530ea73f13afa265f9d4d3f30  tv-spatial-nav
 ee99cf8533ca70c968c964158ecc9022ac0c403090e85471575cc886dea9d5e5  tv-control-mode-fix.patch
 0f1793e6ce6be3cb80516b215e5858146b4fd01bd2a97862b4e5a5fdf6ec1e9e  tv-scroll-and-flat-videos.patch
 308f6f8ab60b8f566df9675d9d7a60615505201ebcfc3c47cfbca3e2cd661b16  tv-spatial-navigation-column.patch
+0faff692cbc742ddcfa7c215a460771492e603246d13a4ffe59e905f9d5a5e0b  tv-spatial-navigation-occlusion.patch

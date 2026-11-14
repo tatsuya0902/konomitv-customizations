@@ -1,0 +1,49 @@
+--- a/client/src/utils/TvSpatialNavigation.ts
++++ b/client/src/utils/TvSpatialNavigation.ts
+@@ -232,6 +232,38 @@ function findNext(fromRect: RectLike, dir: Direction, exclude: HTMLElement | nul
+     return best;
+ }
+ 
++// sticky / fixed のバー (チャンネルのタブバーなど) にフォーカス要素の端が
++// 隠れている場合、その分だけ追加でスクロールして全体が見えるようにする。
++// scrollIntoView は sticky なバーを考慮しないため、上方向の移動で先頭の
++// 項目がバーの下に半分隠れてしまうことがある
++function adjustScrollForOcclusion(el: HTMLElement): void {
++    for (let i = 0; i < 3; i++) {
++        const rect = el.getBoundingClientRect();
++        const cx = Math.min(Math.max(rect.left + rect.width / 2, 4), window.innerWidth - 4);
++        let dy = 0;
++        const topCover = document.elementFromPoint(cx, Math.min(Math.max(rect.top + 4, 4), window.innerHeight - 4));
++        if (topCover !== null && topCover !== el && !el.contains(topCover)) {
++            const coverRect = topCover.getBoundingClientRect();
++            if (coverRect.top <= rect.top + 4 && coverRect.bottom > rect.top) {
++                dy = rect.top - coverRect.bottom - 2;
++            }
++        }
++        if (dy === 0) {
++            const bottomCover = document.elementFromPoint(cx, Math.min(Math.max(rect.bottom - 4, 4), window.innerHeight - 4));
++            if (bottomCover !== null && bottomCover !== el && !el.contains(bottomCover)) {
++                const coverRect = bottomCover.getBoundingClientRect();
++                if (coverRect.bottom >= rect.bottom - 4 && coverRect.top < rect.bottom) {
++                    dy = rect.bottom - coverRect.top + 2;
++                }
++            }
++        }
++        if (dy === 0) {
++            return;
++        }
++        window.scrollBy(0, dy);
++    }
++}
++
+ function setFocus(el: HTMLElement | null): void {
+     if (current !== null) {
+         current.classList.remove(FOCUS_CLASS);
+@@ -241,6 +273,7 @@ function setFocus(el: HTMLElement | null): void {
+         lastRect = snapshotRect(current.getBoundingClientRect());
+         current.classList.add(FOCUS_CLASS);
+         current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
++        adjustScrollForOcclusion(current);
+         // スクロールで位置が変わるため、少し待ってから矩形を取り直す
+         requestAnimationFrame(() => {
+             if (current !== null && document.contains(current)) {
