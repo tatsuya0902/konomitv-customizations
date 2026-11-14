@@ -180,3 +180,7 @@ tv-spatial-navigation-fix.patch の続編。テレビ実機でのフィードバ
 ### tv-timetable-right-edge.patch — 右端で上へ飛ばない
 
 右端の列から右キーを押すと、画面右上隅のボタンが選ばれて上へ飛んでいた。表の中から右方向へ移動するときは、表の外の要素が勝っても採用しないようにした。
+
+### tv-support.patch — リモコンのメディアキー（前/次チャプター）
+
+市販レコーダーでは「前」「次」ボタンはチャプター移動だが、テレビ用ラッパーでは話数移動になっていた。チャプター移動を PlayerController の共通処理にまとめ、プレイヤー上の前/次チャプターボタン・MediaSession の previoustrack/nexttrack・MediaTrackNext/Previous キーのすべてから呼べるようにした。CM 区間（cm_sections）がある録画でのみ移動し、ない場合は false を返す。ラッパーアプリ (v1.4) は前/次キーでまず window.__konomiChapterSeek を呼び、false のときだけ従来の「前の話/次の話」ボタンのクリックにフォールバックする。

@@ -29,6 +29,7 @@
 | ログイン時の設定の自動取り込み | 未同期の端末でログインしたとき、サーバーに保存済みの設定があれば自動で反映し、デバイス間同期を有効化する | [報告](ADDITIONAL-FEATURES.md)／[パッチ](refinements.patch) |
 | テレビ向け D-pad 空間ナビゲーション | リモコンの方向キーで項目間を移動し、決定で開く。再生中の決定キーは再生/一時停止になり、一時停止すると操作モードに入って全画面や設定（画質・速度などパネル内も）も操作できる。テレビ向けラッパーでは全画面ボタンがパネルを隠す全画面表示になる | [報告](ADDITIONAL-FEATURES.md)／[パッチ](tv-support.patch) |
 | テレビ操作の改善（スクロール・フラットな録画一覧） | チャンネル一覧など縦に長い一覧を、スクロールしながら最後まで移動できるよう空間ナビの候補判定を修正。縦移動は同じ列の中だけにし、一覧の最後で左サイドバーへ飛ばないようにした。sticky なタブバーに先頭の項目が半分被る問題も補正し、同じ列では近い順に選ぶ・サイドバーへは現在のページの項目から始めるよう調整。「ビデオをみる」はセクション分けのホームではなく録画番組一覧へ直接遷移し、全件をフラットに表示する | [報告](ADDITIONAL-FEATURES.md)／[パッチ](tv-support.patch) |
+| リモコンのメディアキー（前/次チャプター） | テレビのリモコンの「前」「次」ボタンで、CM区間の境目をチャプター移動できる（MediaSession の previoustrack/nexttrack と MediaTrackNext/Previous キーに対応）。CM区間がない録画では無効で、ラッパーアプリ側は従来の話数移動にフォールバックする | [報告](ADDITIONAL-FEATURES.md)／[パッチ](tv-support.patch) |
 
 改造の経緯や詳細な仕様は [LOCAL-CUSTOMIZATIONS.md](LOCAL-CUSTOMIZATIONS.md) にまとめています。周辺ソフトウェア（EPGStation、Mirakurun、pix-userland）を含めた索引は [CUSTOM-FEATURES.md](CUSTOM-FEATURES.md) を参照してください。
 

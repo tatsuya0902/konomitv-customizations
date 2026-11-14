@@ -489,6 +489,17 @@ EPGStation は終了した予約と失敗した録画を DB に残さないた�
 
 検出エンジン（denpa コア切り出しを採用予定）は、録画ごとに .chapter.txt を書き、再解析で取り込ませる形で連携する。受け口の検証は、実録画（石田靖とぶらりで笑）にテスト用 .chapter.txt を置き、CMSectionsDetector を単体実行して cm_sections に4区間が入り API で返ることまで確認した（テストファイルと区間は検証後に除去済み）。
 
+### メディアキー対応（tv-support に収録）
+
+ユーザーがテレビと BDZ のリモコン写真を共有してくれたのが発端。両リモコンとも前/次（チャプター）キーがあり、テレビ用ラッパー v1.3 はメディアキーを Android 側で受けて video 要素を直接操作していたが、前/次は「次の話/前の話」ボタンの DOM クリック（＝話数移動）になっていた。
+
+- PlayerController: チャプター移動を seekToChapterBoundary() に共通化。ChapterSeekRequest イベントと window.__konomiChapterSeek(direction): boolean を公開（CM 区間なしでは false）
+- MediaSessionManager: 録画再生時の previoustrack/nexttrack（従来 TODO）を ChapterSeekRequest の発行に変更
+- KeyboardShortcutManager: MediaTrackNext/MediaTrackPrevious キーでも ChapterSeekRequest を発行
+- ラッパーアプリは v1.4 に更新（versionCode 5、テレビへインストール済み）：前/次は __konomiChapterSeek を先に試し、false なら話数移動にフォールバック
+
+実機での最終確認（CM 区間入りの録画＋リモコン操作）は、denpa バッチで CM データが入った後に行う。
+
 ### 検証（2026-11-15）
 
 素の v0.14.1 に6バンドルを順に適用したツリーが、本番の client/src と server/app の全ファイルと一致することを確認した。シリーズ予約は API の往復テスト（条件作成→EPGStation ルール→予約23件生成→条件削除→ルール・予約の消去）まで実施。

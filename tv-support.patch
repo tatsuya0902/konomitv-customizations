@@ -225,6 +225,181 @@
      },
      // Service Worker の登録に失敗したとき
      onRegisterError(error) {
+--- a/client/src/services/player/PlayerController.ts
++++ b/client/src/services/player/PlayerController.ts
+@@ -977,6 +977,16 @@ class PlayerController {
+                 this.player.seek(event.playback_position);
+                 this.player.play();
+             });
++
++            // 録画再生時のみ: メディアキー (MediaSession / キーボード) から前/次チャプターへの移動を要求されたときのイベントハンドラーを登録する
++            player_store.event_emitter.off('ChapterSeekRequest');  // ChapterSeekRequest イベントの全てのイベントハンドラーを削除
++            player_store.event_emitter.on('ChapterSeekRequest', (event) => {
++                this.seekToChapterBoundary(event.direction);
++            });
++
++            // テレビ用ラッパーアプリ (ネイティブ側) からもチャプター移動を呼べるよう、window に公開する
++            // CM 区間がない録画では false が返り、ラッパー側は従来の「前の話/次の話」への移動にフォールバックする
++            (window as any).__konomiChapterSeek = (direction: 'next' | 'previous'): boolean => this.seekToChapterBoundary(direction);
+         }
+ 
+         // プレイヤー再起動ボタンを DPlayer の UI に追加する (再生が止まった際などに利用する想定)
+@@ -1018,7 +1028,6 @@ class PlayerController {
+         // レコーダーのチャプターボタンと同様に、CM 区間の境目 (本編/CM の切り替わり) を移動する
+         const cm_sections = player_store.recorded_program?.recorded_video?.cm_sections;
+         if (this.playback_mode === 'Video' && cm_sections && cm_sections.length > 0) {
+-            const chapter_boundaries = [...new Set(cm_sections.flatMap((section) => [section.start_time, section.end_time]))].sort((a, b) => a - b);
+             const left_icons = this.player.container.querySelector('.dplayer-icons.dplayer-icons-left');
+             if (left_icons !== null) {
+                 left_icons.insertAdjacentHTML('beforeend', `
+@@ -1036,30 +1045,10 @@ class PlayerController {
+                     </div>
+                 `);
+                 this.player.container.querySelector('.dplayer-next-chapter-icon')!.addEventListener('click', () => {
+-                    if (this.destroyed === true || this.player === null) return;
+-                    const position = this.player.video.currentTime;
+-                    const target = chapter_boundaries.find((boundary) => boundary > position + 0.5);
+-                    if (target === undefined) {
+-                        this.player.notice('この先にチャプターはありません');
+-                        return;
+-                    }
+-                    this.player.seek(target);
+-                    this.player.play();
++                    this.seekToChapterBoundary('next');
+                 });
+                 this.player.container.querySelector('.dplayer-prev-chapter-icon')!.addEventListener('click', () => {
+-                    if (this.destroyed === true || this.player === null) return;
+-                    const position = this.player.video.currentTime;
+-                    const prevs = chapter_boundaries.filter((boundary) => boundary < position - 0.5);
+-                    if (prevs.length === 0) {
+-                        this.player.seek(0);
+-                        this.player.play();
+-                        return;
+-                    }
+-                    // 境目を3秒以上過ぎていればその境目へ、そうでなければ1つ前の境目へ (レコーダーのチャプター戻しと同じ挙動)
+-                    const last = prevs[prevs.length - 1];
+-                    const target = (position - last > 3 || prevs.length < 2) ? last : prevs[prevs.length - 2];
+-                    this.player.seek(target);
+-                    this.player.play();
++                    this.seekToChapterBoundary('previous');
+                 });
+             }
+         }
+@@ -1140,6 +1129,44 @@ class PlayerController {
+      * 処理の完了を待つ必要はないので、基本 await せず非同期で実行すべき
+      * 基本 Safari だとなぜか再生開始がうまく行かないことが多いので（自動再生まわりが影響してる？）、その対策として用意した処理
+      */
++    // CM 区間の境目 (本編/CM の切り替わり) へシークする (ローカル改造)
++    // レコーダーのチャプターボタンと同様の挙動: 次は現在位置より後の最初の境目へ、
++    // 前は境目を3秒以上過ぎていればその境目へ、そうでなければ1つ前の境目へ移動する
++    // CM 区間がない場合やプレイヤーが利用できない場合は false を返す (呼び出し側でフォールバック可能)
++    private seekToChapterBoundary(direction: 'next' | 'previous'): boolean {
++        if (this.destroyed === true || this.player === null || this.playback_mode !== 'Video') {
++            return false;
++        }
++        const player_store = usePlayerStore();
++        const cm_sections = player_store.recorded_program?.recorded_video?.cm_sections;
++        if (!cm_sections || cm_sections.length === 0) {
++            return false;
++        }
++        const boundaries = [...new Set(cm_sections.flatMap((section) => [section.start_time, section.end_time]))].sort((a, b) => a - b);
++        const position = this.player.video.currentTime;
++        if (direction === 'next') {
++            const target = boundaries.find((boundary) => boundary > position + 0.5);
++            if (target === undefined) {
++                this.player.notice('この先にチャプターはありません');
++                return true;
++            }
++            this.player.seek(target);
++        } else {
++            const prevs = boundaries.filter((boundary) => boundary < position - 0.5);
++            if (prevs.length === 0) {
++                this.player.seek(0);
++                this.player.play();
++                return true;
++            }
++            const last = prevs[prevs.length - 1];
++            const target = (position - last > 3 || prevs.length < 2) ? last : prevs[prevs.length - 2];
++            this.player.seek(target);
++        }
++        this.player.play();
++        return true;
++    }
++
++
+     private async recoverPlayback(): Promise<void> {
+         assert(this.player !== null);
+         const player_store = usePlayerStore();
+@@ -2235,6 +2262,11 @@ class PlayerController {
+             return;
+         }
+         this.destroying = true;
++
++        // テレビ用ラッパー向けに公開したチャプター移動関数を解除する (ローカル改造)
++        if ((window as any).__konomiChapterSeek) {
++            delete (window as any).__konomiChapterSeek;
++        }
+         this.fullscreen_handler_cleanup?.();
+         this.fullscreen_handler_cleanup = null;
+ 
+--- a/client/src/services/player/managers/KeyboardShortcutManager.ts
++++ b/client/src/services/player/managers/KeyboardShortcutManager.ts
+@@ -435,6 +435,16 @@ class KeyboardShortcutManager implements PlayerManager {
+                 return;
+             }
+ 
++            // メディアキー (テレビのリモコンなど) の前/次: 前/次チャプター (CM 区間の境目) へ移動 (録画再生時のみ、ローカル改造)
++            if (this.playback_mode === 'Video' && (event.key === 'MediaTrackNext' || event.key === 'MediaTrackPrevious')) {
++                player_store.event_emitter.emit('ChapterSeekRequest', {
++                    direction: event.key === 'MediaTrackNext' ? 'next' : 'previous',
++                });
++                event.preventDefault();
++                event.stopPropagation();
++                return;
++            }
++
+             // キーリピート (押しっぱなし) 状態かを検知
+             let is_repeat = false;
+             if (event.repeat) {
+--- a/client/src/services/player/managers/MediaSessionManager.ts
++++ b/client/src/services/player/managers/MediaSessionManager.ts
+@@ -123,9 +123,9 @@ class MediaSessionManager implements PlayerManager {
+                 });
+                 // ルーティングを前のチャンネルに置き換える
+                 await router.push({path: `/tv/watch/${channels_store.channel.previous.display_channel_id}`});
+-            // ビデオ視聴: シリーズ番組の前の話数に切り替え
++            // ビデオ視聴: 前のチャプター (CM 区間の境目) に移動 (ローカル改造)
+             } else {
+-                // TODO: 未実装
++                player_store.event_emitter.emit('ChapterSeekRequest', {direction: 'previous'});
+             }
+         });
+         // 次のトラックに移動
+@@ -139,9 +139,9 @@ class MediaSessionManager implements PlayerManager {
+                 });
+                 // ルーティングを次のチャンネルに置き換える
+                 await router.push({path: `/tv/watch/${channels_store.channel.next.display_channel_id}`});
+-            // ビデオ視聴: シリーズ番組の次の話数に切り替え
++            // ビデオ視聴: 次のチャプター (CM 区間の境目) に移動 (ローカル改造)
+             } else {
+-                // TODO: 未実装
++                player_store.event_emitter.emit('ChapterSeekRequest', {direction: 'next'});
+             }
+         });
+         // Picture-in-Picture モードに切り替える (Chrome 120 以降のみ対応)
+--- a/client/src/stores/PlayerStore.ts
++++ b/client/src/stores/PlayerStore.ts
+@@ -56,6 +56,10 @@ export type PlayerEvents = {
+     SeekRequest: {
+         playback_position: number;  // シーク先の再生位置 (秒)
+     }
++    // 録画再生時: メディアキーなどから前/次チャプター (CM 区間の境目) への移動を要求する (ローカル改造)
++    ChapterSeekRequest: {
++        direction: 'next' | 'previous';  // 移動方向
++    }
+     // 録画再生時: UI コンポーネントからダイジェスト再生の ON/OFF 切り替えを要求する (ローカル改造)
+     DigestToggleRequest: Record<string, never>;
+     // 録画再生時: ExcitementManager からダイジェスト再生の状態を UI コンポーネントへ通知する (ローカル改造)
 --- a/client/src/utils/TvSpatialNavigation.ts
 +++ b/client/src/utils/TvSpatialNavigation.ts
 @@ -0,0 +1,1117 @@
