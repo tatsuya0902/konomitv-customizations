@@ -1,0 +1,91 @@
+--- a/client/src/utils/TvSpatialNavigation.ts
++++ b/client/src/utils/TvSpatialNavigation.ts
+@@ -61,6 +61,9 @@ const isTvWrapper = typeof navigator !== 'undefined' && navigator.userAgent.incl
+ 
+ let current: HTMLElement | null = null;
+ let lastRect: RectLike | null = null;
++// サイドバーへ移る直前に本体側でフォーカスしていた要素
++// (サイドバーから右キーで本体へ戻るときの復帰先)
++let lastContent: HTMLElement | null = null;
+ let active = false;
+ let controlMode = false;
+ let tvFullscreen = false;
+@@ -207,12 +210,20 @@ function scoreFor(fromRect: RectLike, rect: RectLike, dir: Direction): number |
+ }
+ 
+ function findNext(fromRect: RectLike, dir: Direction, exclude: HTMLElement | null, pool?: HTMLElement[]): HTMLElement | null {
++    const candidates = pool ?? getCandidates();
++    // 縦移動では、他の候補の中に含まれる要素 (カード右上のピン留めボタン等) を候補から外す。
++    // 次のカードの上端にあるボタンはカード本体より縦の距離が近いため、
++    // スクロールのたびにボタンへ寄り道してしまう (横移動では従来通り到達できる)
++    const excludeContained = pool === undefined && (dir === 'up' || dir === 'down');
+     let best: HTMLElement | null = null;
+     let bestScore = Infinity;
+-    for (const el of pool ?? getCandidates()) {
++    for (const el of candidates) {
+         if (el === exclude) {
+             continue;
+         }
++        if (excludeContained && candidates.some((other) => other !== el && other.contains(el))) {
++            continue;
++        }
+         const rect = el.getBoundingClientRect();
+         // 縦移動では、現在の要素と横方向の範囲が重なる候補だけを対象にする
+         // (右側の一覧を最後までスクロールしたときに、画面下部にある
+@@ -554,6 +565,7 @@ function onKeyDown(event: KeyboardEvent): void {
+             current = null;
+         }
+         lastRect = null;
++        lastContent = null;
+     }
+ 
+     // 操作モード中にダイアログが開いたら (設定項目から開くもの等)、
+@@ -597,18 +609,36 @@ function onKeyDown(event: KeyboardEvent): void {
+             setFocus(controlMode ? (getControlCandidates()[0] ?? null) : pickInitialFocus());
+             return;
+         }
+-        let next = findNext(
+-            fromRect, dir,
+-            current !== null && document.contains(current) ? current : null,
+-            controlMode ? getControlCandidates() : undefined,
+-        );
+-        // サイドバーへ移るときは、真横にある項目ではなく、
+-        // 現在のページの項目 (アクティブなリンク) から始める
+-        if (next !== null && !controlMode && next.classList.contains('navigation__link')
+-            && (current === null || !current.classList.contains('navigation__link'))) {
+-            const activeLink = document.querySelector<HTMLElement>('.navigation__link--active');
+-            if (activeLink !== null && activeLink !== next && isVisible(activeLink)) {
+-                next = activeLink;
++        let next: HTMLElement | null = null;
++        // サイドバーから右キーで本体へ戻るときは、タブバーではなく、
++        // サイドバーへ移る直前にいた要素 (なければ先頭の項目) へ戻る
++        if (dir === 'right' && !controlMode && current !== null && document.contains(current)
++            && current.classList.contains('navigation__link')) {
++            next = lastContent !== null && document.contains(lastContent) && isVisible(lastContent)
++                ? lastContent
++                : pickInitialFocus();
++            if (next === current) {
++                next = null;
++            }
++        }
++        if (next === null) {
++            next = findNext(
++                fromRect, dir,
++                current !== null && document.contains(current) ? current : null,
++                controlMode ? getControlCandidates() : undefined,
++            );
++            // サイドバーへ移るときは、真横にある項目ではなく、
++            // 現在のページの項目 (アクティブなリンク) から始める
++            if (next !== null && !controlMode && next.classList.contains('navigation__link')
++                && (current === null || !current.classList.contains('navigation__link'))) {
++                // 復帰先として、移る直前にいた本体側の要素を覚えておく
++                if (current !== null && document.contains(current)) {
++                    lastContent = current;
++                }
++                const activeLink = document.querySelector<HTMLElement>('.navigation__link--active');
++                if (activeLink !== null && activeLink !== next && isVisible(activeLink)) {
++                    next = activeLink;
++                }
+             }
+         }
+         if (next !== null) {
