@@ -11,6 +11,8 @@
 | 場面一覧 | `chapters.patch` | 番組情報パネルに「場面一覧」ボタンを追加。シークバー用タイル画像を約12場面に間引いてグリッド表示し、クリックでその場面へシークするダイアログ (ChapterListDialog) |
 | 盛り上がり表示とダイジェスト再生 | `excitement.patch` / `excitement-fix.patch` / `digest-button-panel.patch` | 過去ログコメントを5秒ビンで集計し、シークバーの上に密度グラフを表示 (クリックでシーク)。密度が高い区間だけを連続再生するダイジェスト再生。`excitement-fix` は帯の配置をシークバー内側へ直す修正、`digest-button-panel` はダイジェストの ON/OFF ボタンをプレイヤー内から番組情報パネルへ移す変更 (プレイヤー内の小さいボタンは押しにくいため) |
 | 追いかけ再生のカード修正 | `chase-card-click-fix.patch` | 録画中カード全体に掛かる上流 CSS の `pointer-events: none` を録画中カードだけ外し、追いかけ再生のためにカードを開けるようにする修正 (解析失敗カードは従来通り無効)。`chase-playback.patch` の利用者向け |
+| しおり | `recorder-features.patch` | 視聴画面の番組情報パネルに「しおりを追加」ボタン。現在位置をサーバー側 (server/data/bookmarks.json) に保存して世帯で共有し、場面一覧ダイアログの「しおり」欄からジャンプ・削除できる。録画の削除時に一緒に消える |
+| 録画結果一覧 | `recorder-features.patch` | 「ビデオをみる」のトップに「録画結果」ボタン。EPGStation の DB を5分ごとに読み取り専用で照合し、予約の結果 (録画できた / 一部のみ / 失敗) を server/data/recording-results.json に記録して表示する。判定は尺が予定の95%以上かと録画ファイルの有無。ドロップ数も併記する |
 
 ## 適用方法
 

@@ -23,6 +23,12 @@ KonomiTV **v0.14.1**の録画再生に、録画中番組の追いかけ再生と
 - `client/src/stores/SettingsStore.ts`：再生速度（0.75〜2倍）を含む新規設定3件を追加。いずれも端末ローカル設定で、サーバー同期の対象外です。再生速度は`video_playback_rate`に保存・復元し、ライブ再生では常に1倍に戻します。
 - `client/src/views/Settings/General.vue`：設定画面に上記の項目を追加。
 
+## 続き再生の巻き戻し（playback.patch に収録）
+
+- `client/src/services/player/PlayerController.ts`：視聴履歴の保存位置から再開するとき、設定された秒数だけ手前から再生します（番組先頭のマージンより前には戻りません）。
+- `client/src/stores/SettingsStore.ts`：`video_resume_rewind_seconds`（既定10秒、端末ローカル設定でサーバー同期の対象外）。
+- `client/src/views/Settings/General.vue`：設定画面に「続き再生の巻き戻し秒数」（0/5/10/15/30秒）を追加。0秒で従来どおり保存位置そのままから再開します。
+
 ## 検証結果
 
 - 公式v0.14.1のツリーに対する`git apply --check`：3パッチとも個別・併用でクリーンに適用できることを確認しました。

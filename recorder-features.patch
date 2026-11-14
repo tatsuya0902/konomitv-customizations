@@ -11,7 +11,7 @@
                  <!-- 実際の予約がある場合: 削除ボタン -->
                  <v-btn v-if="hasRealReservation" class="px-3" variant="text" @click="handleDelete">
                      <Icon icon="fluent:delete-16-regular" width="20px" height="20px" />
-@@ -190,11 +194,13 @@
+@@ -190,11 +194,13 @@ import { ref, computed, watch, onMounted } from 'vue';
  import ReservationProgramInfo from '@/components/Reservations/ReservationProgramInfo.vue';
  import ReservationRecordingSettings from '@/components/Reservations/ReservationRecordingSettings.vue';
  import Message from '@/message';
@@ -26,7 +26,7 @@
  
  // Props
  const props = defineProps<{
-@@ -265,6 +271,17 @@
+@@ -265,6 +271,17 @@ const hasRealReservation = computed(() => hasReservation.value && !isMockReserva
  
  // 表示用の番組情報（予約があればそちらを優先）
  const displayProgram = computed(() => props.reservation?.program ?? props.program ?? null);
@@ -72,7 +72,7 @@
  import { TimeTableUtils } from '@/utils/TimeTableUtils';
  import Utils from '@/utils/Utils';
  
-@@ -174,6 +181,13 @@
+@@ -174,6 +181,13 @@ const isExpanded = computed(() => {
  /**
   * 予約がある場合
   */
@@ -354,7 +354,7 @@
  <script lang="ts" setup>
  
  import { ref, computed, watch } from 'vue';
-@@ -202,6 +243,8 @@
+@@ -202,6 +243,8 @@ const emit = defineEmits<{
  
  // ファイル情報ダイアログの表示状態
  const show_video_info = ref(false);
@@ -363,7 +363,7 @@
  // 削除確認ダイアログの表示状態
  const show_delete_confirmation = ref(false);
  const deletePreview = ref<IRecordingDeletePreview | null>(null);
-@@ -217,6 +260,8 @@
+@@ -217,6 +260,8 @@ const isProtected = computed(() => {
      }
      return props.program.is_protected === true;
  });
@@ -372,7 +372,7 @@
  watch(() => [props.program.id, useUserStore().user?.id], () => {
      if (useUserStore().user) requestRecordingProtectionBadge(props.program.id);
  }, {immediate: true});
-@@ -306,6 +351,24 @@
+@@ -306,6 +351,24 @@ const watchHistory = computed(() => {
      return settingsStore.settings.watched_history.find(history => history.video_id === props.program.id);
  });
  
@@ -397,7 +397,7 @@
  // 視聴履歴から削除
  const removeFromWatchedHistory = () => {
      settingsStore.settings.watched_history = settingsStore.settings.watched_history.filter(history => {
-@@ -339,6 +402,17 @@
+@@ -339,6 +402,17 @@ const deleteVideo = async () => {
      }
  };
  
@@ -415,7 +415,7 @@
  </script>
  <style lang="scss" scoped>
  
-@@ -492,6 +566,25 @@
+@@ -492,6 +566,25 @@ const deleteVideo = async () => {
          pointer-events: none;
      }
  
@@ -441,12 +441,190 @@
      &__content {
          display: flex;
          flex-direction: column;
+--- a/client/src/components/Videos/RecordingResultsDialog.vue
++++ b/client/src/components/Videos/RecordingResultsDialog.vue
+@@ -0,0 +1,162 @@
++<template>
++    <v-dialog max-width="900" transition="slide-y-transition" :model-value="show" @update:model-value="$emit('update:show', $event)">
++        <v-card class="recording-results">
++            <v-card-title class="px-5 pt-6 pb-3 d-flex align-center font-weight-bold" style="height: 60px;">
++                <Icon icon="fluent:clipboard-task-16-filled" height="24px" />
++                <span class="ml-3">録画結果</span>
++                <v-spacer></v-spacer>
++                <div v-ripple class="d-flex align-center rounded-circle cursor-pointer px-2 py-2" @click="$emit('update:show', false)">
++                    <Icon icon="fluent:dismiss-12-filled" width="23px" height="23px" />
++                </div>
++            </v-card-title>
++            <div class="px-5 pb-6">
++                <div v-if="results.length === 0" class="py-6 text-center">まだ録画結果がありません</div>
++                <div v-for="result in results" :key="result.reserve_id" v-ripple class="recording-results__item"
++                    :class="{'recording-results__item--clickable': result.recorded_id !== null}"
++                    @click="openRecorded(result)">
++                    <Icon :icon="statusIcon(result.status)" width="20px" height="20px"
++                        :style="{color: statusColor(result.status), flexShrink: 0}" />
++                    <div class="recording-results__body">
++                        <div class="recording-results__name">{{result.name}}</div>
++                        <div class="recording-results__meta">{{metaLine(result)}}</div>
++                        <div v-if="result.status === 'failed'" class="recording-results__note recording-results__note--failed">
++                            録画ファイルが作成されませんでした（チューナー不足や受信不良の可能性があります）
++                        </div>
++                        <div v-else-if="dropLine(result) !== ''" class="recording-results__note">{{dropLine(result)}}</div>
++                    </div>
++                    <span class="recording-results__status" :style="{color: statusColor(result.status)}">{{statusLabel(result.status)}}</span>
++                </div>
++            </div>
++        </v-card>
++    </v-dialog>
++</template>
++<script lang="ts">
++
++import dayjs from 'dayjs';
++import { defineComponent } from 'vue';
++
++import { formatPlaybackTime } from '@/services/CommentHighlights';
++import Videos, { IRecordingResult } from '@/services/Videos';
++
++// ローカル改造: 予約録画の結果 (成功 / 一部のみ / 失敗) を一覧表示するダイアログ
++// 結果はサーバー側で EPGStation の予約・録画と照合して記録されている
++export default defineComponent({
++    name: 'RecordingResultsDialog',
++    props: {
++        show: {
++            type: Boolean,
++            default: false,
++        },
++    },
++    emits: ['update:show'],
++    data() {
++        return {
++            // 録画結果の一覧 (新しい順)
++            results: [] as IRecordingResult[],
++        };
++    },
++    watch: {
++        // ダイアログが開かれたら最新の結果を取得する
++        async show(is_shown: boolean): Promise<void> {
++            if (is_shown !== true) {
++                return;
++            }
++            this.results = await Videos.getRecordingResults();
++        },
++    },
++    methods: {
++        statusLabel(status: IRecordingResult['status']): string {
++            return { success: '録画できた', partial: '一部のみ', failed: '失敗' }[status];
++        },
++        statusIcon(status: IRecordingResult['status']): string {
++            return {
++                success: 'fluent:checkmark-circle-16-filled',
++                partial: 'fluent:warning-16-filled',
++                failed: 'fluent:dismiss-circle-16-filled',
++            }[status];
++        },
++        statusColor(status: IRecordingResult['status']): string {
++            return { success: '#66bb6a', partial: '#ffb340', failed: '#ef5350' }[status];
++        },
++        // チャンネル名と日時・尺の行
++        metaLine(result: IRecordingResult): string {
++            const start = dayjs(result.start_at * 1000);
++            const end = dayjs(result.end_at * 1000);
++            let line = `${result.channel_name} ・ ${start.format('M/D(ddd) HH:mm')}〜${end.format('HH:mm')}`;
++            if (result.duration !== null) {
++                line += ` ・ 尺 ${formatPlaybackTime(result.duration)} / 予定 ${formatPlaybackTime(result.end_at - result.start_at)}`;
++            }
++            return line;
++        },
++        // 受信の乱れ (ドロップ等) の行。なければ空文字列
++        dropLine(result: IRecordingResult): string {
++            const parts: string[] = [];
++            if (result.drop_count !== null && result.drop_count > 0) {
++                parts.push(`ドロップ ${result.drop_count} 件`);
++            }
++            if (result.error_count !== null && result.error_count > 0) {
++                parts.push(`エラー ${result.error_count} 件`);
++            }
++            if (result.scrambling_count !== null && result.scrambling_count > 0) {
++                parts.push(`スクランブル ${result.scrambling_count} 件`);
++            }
++            return parts.length > 0 ? `受信の乱れ: ${parts.join(' ・ ')}` : '';
++        },
++        // 録画が残っている結果はクリックで視聴画面へ移動する
++        openRecorded(result: IRecordingResult): void {
++            if (result.recorded_id === null) {
++                return;
++            }
++            this.$emit('update:show', false);
++            this.$router.push({ path: `/videos/watch/${result.recorded_id}` });
++        },
++    },
++});
++
++</script>
++<style lang="scss" scoped>
++
++.recording-results {
++    &__item {
++        display: flex;
++        align-items: flex-start;
++        gap: 10px;
++        padding: 10px 8px;
++        border-bottom: 1px solid rgba(128, 128, 128, 0.25);
++        &--clickable {
++            cursor: pointer;
++        }
++    }
++    &__body {
++        flex: 1;
++        min-width: 0;
++    }
++    &__name {
++        font-size: 14px;
++        font-weight: bold;
++        white-space: nowrap;
++        overflow: hidden;
++        text-overflow: ellipsis;
++    }
++    &__meta {
++        margin-top: 2px;
++        font-size: 12px;
++        opacity: 0.75;
++    }
++    &__note {
++        margin-top: 2px;
++        font-size: 12px;
++        color: #ffb340;
++        &--failed {
++            color: #ef5350;
++        }
++    }
++    &__status {
++        font-size: 13px;
++        font-weight: bold;
++        flex-shrink: 0;
++        padding-top: 1px;
++    }
++}
++
++</style>
 --- a/client/src/components/Watch/Panel/ChapterListDialog.vue
 +++ b/client/src/components/Watch/Panel/ChapterListDialog.vue
-@@ -10,6 +10,15 @@
+@@ -10,6 +10,28 @@
                  </div>
              </v-card-title>
              <div class="px-5 pb-6">
++                <div v-if="bookmarks.length > 0" class="chapter-list__highlights">
++                    <div class="chapter-list__highlights-title">しおり</div>
++                    <div v-for="bookmark in bookmarks" :key="bookmark.id" v-ripple class="chapter-list__highlight-item"
++                        @click="seekTo(bookmark.position)">
++                        <Icon icon="fluent:bookmark-16-filled" width="16px" height="16px" style="color: #ffb340; flex-shrink: 0;" />
++                        <span class="chapter-list__highlight-time">{{formatPlaybackTime(bookmark.position)}}</span>
++                        <span v-if="bookmark.label" class="chapter-list__highlight-count">{{bookmark.label}}</span>
++                        <v-spacer></v-spacer>
++                        <div v-ripple class="chapter-list__bookmark-delete" @click.stop="deleteBookmark(bookmark.id)">
++                            <Icon icon="fluent:delete-16-regular" width="15px" height="15px" />
++                        </div>
++                    </div>
++                </div>
 +                <div v-if="highlight_segments.length > 0" class="chapter-list__highlights">
 +                    <div class="chapter-list__highlights-title">見どころ（コメントの盛り上がり）</div>
 +                    <div v-for="(segment, index) in highlight_segments" :key="index" v-ripple class="chapter-list__highlight-item"
@@ -459,15 +637,17 @@
                  <div v-if="chapters.length === 0" class="py-6 text-center">場面サムネイルがまだ生成されていません</div>
                  <div v-else class="chapter-list__grid">
                      <div v-for="chapter in chapters" :key="chapter.time" v-ripple class="chapter-list__item" @click="seekTo(chapter.time)">
-@@ -26,6 +35,7 @@
+@@ -26,7 +48,8 @@
  import { mapStores } from 'pinia';
  import { defineComponent, PropType } from 'vue';
  
+-import { IRecordedProgram } from '@/services/Videos';
 +import { extractHighlightSegments, fetchCommentDensity, formatPlaybackTime, IHighlightSegment, MIN_COMMENTS_FOR_HIGHLIGHTS } from '@/services/CommentHighlights';
- import { IRecordedProgram } from '@/services/Videos';
++import Videos, { IBookmark, IRecordedProgram } from '@/services/Videos';
  import usePlayerStore from '@/stores/PlayerStore';
  import Utils from '@/utils';
-@@ -44,6 +54,31 @@
+ 
+@@ -44,6 +67,39 @@ export default defineComponent({
          },
      },
      emits: ['update:show'],
@@ -475,6 +655,9 @@
 +        return {
 +            // ユーティリティをテンプレートで使えるように
 +            formatPlaybackTime: Object.freeze(formatPlaybackTime),
++
++            // サーバーに保存されたしおり (世帯で共有される)
++            bookmarks: [] as IBookmark[],
 +
 +            // コメントの盛り上がりから抽出した見どころ区間
 +            highlight_segments: [] as IHighlightSegment[],
@@ -484,7 +667,12 @@
 +    watch: {
 +        // ダイアログが開かれたら、見どころ区間を読み込む (同じ録画では再取得しない)
 +        async show(is_shown: boolean): Promise<void> {
-+            if (is_shown !== true || this.highlights_loaded_for === this.program.id) {
++            if (is_shown !== true) {
++                return;
++            }
++            // しおりは再生中にも追加されるため、開くたびに最新を取得する
++            this.bookmarks = await Videos.getBookmarks(this.program.id);
++            if (this.highlights_loaded_for === this.program.id) {
 +                return;
 +            }
 +            this.highlights_loaded_for = this.program.id;
@@ -499,7 +687,19 @@
      computed: {
          ...mapStores(usePlayerStore),
          chapters(): { time: number; label: string; style: Record<string, string> }[] {
-@@ -94,6 +129,34 @@
+@@ -76,6 +132,11 @@ export default defineComponent({
+             this.playerStore.event_emitter.emit('SeekRequest', { playback_position: time });
+             this.$emit('update:show', false);
+         },
++        // しおりを削除する
++        async deleteBookmark(bookmark_id: string): Promise<void> {
++            await Videos.deleteBookmark(this.program.id, bookmark_id);
++            this.bookmarks = this.bookmarks.filter((bookmark) => bookmark.id !== bookmark_id);
++        },
+     },
+ });
+ 
+@@ -94,6 +155,42 @@ function formatTime(seconds: number): string {
  <style lang="scss" scoped>
  
  .chapter-list {
@@ -530,6 +730,14 @@
 +    &__highlight-count {
 +        font-size: 12px;
 +        opacity: 0.75;
++    }
++    &__bookmark-delete {
++        display: flex;
++        align-items: center;
++        padding: 4px;
++        border-radius: 50%;
++        opacity: 0.7;
++        flex-shrink: 0;
 +    }
      &__grid {
          display: grid;
@@ -676,7 +884,17 @@
 +</style>
 --- a/client/src/components/Watch/Panel/RecordedProgram.vue
 +++ b/client/src/components/Watch/Panel/RecordedProgram.vue
-@@ -72,6 +72,20 @@
+@@ -66,12 +66,30 @@
+                     <Icon icon="fluent:image-multiple-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
+                     <span style="margin-left: 6px;">場面一覧</span>
+                 </div>
++                <div v-ripple class="program-info__button" @click="addBookmark">
++                    <Icon icon="fluent:bookmark-add-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
++                    <span style="margin-left: 6px;">しおりを追加</span>
++                </div>
+                 <div v-if="digest_available" v-ripple class="program-info__button"
+                     :class="{'program-info__button--digest-active': digest_active}"
+                     @click="toggleDigest">
                      <Icon icon="fluent:fast-forward-16-filled" width="18px" height="18px" style="margin-bottom: -1px" />
                      <span style="margin-left: 6px;">ダイジェスト再生{{digest_active ? '（ON）' : ''}}</span>
                  </div>
@@ -697,7 +915,7 @@
              </div>
          </section>
          <section class="program-detail-container">
-@@ -82,6 +96,7 @@
+@@ -82,6 +100,7 @@
              </div>
          </section>
          <ChapterListDialog :program="playerStore.recorded_program" v-model:show="show_chapter_list" />
@@ -705,18 +923,20 @@
      </div>
  </template>
  <script lang="ts">
-@@ -90,7 +105,10 @@
+@@ -90,7 +109,12 @@ import { mapStores } from 'pinia';
  import { defineComponent } from 'vue';
  
  import ChapterListDialog from '@/components/Watch/Panel/ChapterListDialog.vue';
 +import CommentSearchDialog from '@/components/Watch/Panel/CommentSearchDialog.vue';
  import Message from '@/message';
 +import Programs, { IProgramSearchCondition } from '@/services/Programs';
++import Videos from '@/services/Videos';
++import { formatPlaybackTime } from '@/services/CommentHighlights';
 +import Reservations from '@/services/Reservations';
  import usePlayerStore from '@/stores/PlayerStore';
  import useSettingsStore from '@/stores/SettingsStore';
  import Utils, { ProgramUtils } from '@/utils';
-@@ -99,6 +117,7 @@
+@@ -99,6 +123,7 @@ export default defineComponent({
      name: 'Panel-RecordedProgramTab',
      components: {
          ChapterListDialog,
@@ -724,7 +944,7 @@
      },
      data() {
          return {
-@@ -112,9 +131,19 @@
+@@ -112,9 +137,22 @@ export default defineComponent({
              // 場面一覧ダイアログの表示状態
              show_chapter_list: false,
  
@@ -735,6 +955,9 @@
              digest_available: false,
              digest_active: false,
 +
++            // 現在の再生位置 (しおり追加用、PlaybackPositionChanged で随時更新される)
++            current_playback_position: 0,
++
 +            // 次回予約の実行中フラグ
 +            is_reserving_next: false,
 +
@@ -744,7 +967,7 @@
          };
      },
      computed: {
-@@ -126,6 +155,19 @@
+@@ -126,6 +164,19 @@ export default defineComponent({
                  item.type === 'RecordedProgram' && item.id === this.playerStore.recorded_program.id
              );
          },
@@ -764,7 +987,21 @@
      },
      methods: {
          // 指定された録画番組の視聴画面へ移動する (前の話・次の話ボタン用)
-@@ -137,6 +179,71 @@
+@@ -133,10 +184,85 @@ export default defineComponent({
+             if (program_id === null) return;
+             this.$router.push({ path: `/videos/watch/${program_id}` });
+         },
++        // 現在の再生位置にしおりを追加する (しおりはサーバー側で世帯共有される)
++        async addBookmark(): Promise<void> {
++            const position = this.current_playback_position;
++            const bookmark = await Videos.createBookmark(this.playerStore.recorded_program.id, position);
++            if (bookmark !== null) {
++                Message.show(`しおりを追加しました (${formatPlaybackTime(position)})`);
++            } else {
++                Message.show('しおりの追加に失敗しました。');
++            }
++        },
+         // ダイジェスト再生の ON/OFF をプレイヤー側 (ExcitementManager) へ依頼する
          toggleDigest(): void {
              this.playerStore.event_emitter.emit('DigestToggleRequest', {});
          },
@@ -836,7 +1073,20 @@
          // マイリストの追加/削除を切り替える
          toggleMylist(): void {
              const program = this.playerStore.recorded_program;
-@@ -168,11 +275,17 @@
+@@ -156,6 +282,12 @@ export default defineComponent({
+             }
+         },
+     },
++    mounted() {
++        // 再生位置を随時記録する (しおり追加ボタン用)
++        this.playerStore.event_emitter.on('PlaybackPositionChanged', (event) => {
++            this.current_playback_position = event.playback_position;
++        });
++    },
+     created() {
+         // PlayerController 側からCommentReceived イベントで過去ログコメントを受け取り、コメント数を算出する
+         this.playerStore.event_emitter.on('CommentReceived', (event) => {
+@@ -168,11 +300,17 @@ export default defineComponent({
              this.digest_available = state.available;
              this.digest_active = state.active;
          });
@@ -854,7 +1104,7 @@
      },
  });
  
-@@ -308,6 +421,7 @@
+@@ -308,6 +446,7 @@ export default defineComponent({
              align-items: center;
              padding: 5px 8px;
              margin-top: 16px;
@@ -864,18 +1114,18 @@
              line-height: 170%;
 --- a/client/src/router/index.ts
 +++ b/client/src/router/index.ts
-@@ -50,6 +50,11 @@
+@@ -49,6 +49,11 @@ const router = createRouter({
+             name: 'Videos Programs',
              component: () => import('@/views/Videos/Programs.vue'),
          },
-         {
++        {
 +            path: '/videos/trash',
 +            name: 'Videos Trash',
 +            component: () => import('@/views/Videos/Trash.vue'),
 +        },
-+        {
+         {
              path: '/videos/watch/:video_id',
              name: 'Videos Watch',
-             component: () => import('@/views/Videos/Watch.vue'),
 --- a/client/src/services/CommentHighlights.ts
 +++ b/client/src/services/CommentHighlights.ts
 @@ -0,0 +1,161 @@
@@ -1113,7 +1363,37 @@
 +}
 --- a/client/src/services/Videos.ts
 +++ b/client/src/services/Videos.ts
-@@ -121,6 +121,7 @@
+@@ -114,6 +114,29 @@ export const IRecordedVideoDefault: IRecordedVideo = {
+ };
+ 
+ /** 録画番組情報を表すインターフェース */
++// ローカル改造: しおり 1 件 (サーバー側で世帯共有される)
++export interface IBookmark {
++    id: string;
++    position: number;  // 再生位置 (秒)
++    label: string;
++    created_at: number;  // 追加日時 (UNIX 時間、秒)
++}
++
++// ローカル改造: 録画結果 1 件 (サーバー側で EPGStation と照合して記録される)
++export interface IRecordingResult {
++    reserve_id: number;
++    recorded_id: number | null;  // 録画番組の ID (失敗時は null)
++    name: string;
++    channel_name: string;
++    start_at: number;  // 開始日時 (UNIX 時間、秒)
++    end_at: number;  // 終了日時 (UNIX 時間、秒)
++    status: 'success' | 'partial' | 'failed';
++    duration: number | null;  // 実尺 (秒、失敗時は null)
++    error_count: number | null;
++    drop_count: number | null;
++    scrambling_count: number | null;
++}
++
+ export interface IRecordedProgram {
+     id: number;
+     recorded_video: IRecordedVideo;
+@@ -121,6 +144,7 @@ export interface IRecordedProgram {
      recording_end_margin: number;
      is_partially_recorded: boolean;
      is_protected: boolean | null;
@@ -1121,7 +1401,7 @@
      next_episode_id: number | null;
      previous_episode_id: number | null;
      channel: IChannel | null;
-@@ -156,6 +157,7 @@
+@@ -156,6 +180,7 @@ export const IRecordedProgramDefault: IRecordedProgram = {
      recording_end_margin: 0,
      is_partially_recorded: false,
      is_protected: null,
@@ -1129,7 +1409,7 @@
      next_episode_id: null,
      previous_episode_id: null,
      channel: null,
-@@ -213,6 +215,19 @@
+@@ -213,6 +238,19 @@ export interface IRecordingProtection {
      is_protected: boolean | null;
  }
  
@@ -1149,10 +1429,11 @@
  class Videos {
  
      /**
-@@ -325,6 +340,18 @@
+@@ -324,6 +362,73 @@ class Videos {
+     }
  
  
-     /**
++    /**
 +     * 録画の視聴進捗 (到達した再生位置) をサーバーへ報告する (ローカル改造)
 +     * 視聴状態はサーバー側で一元管理され、一覧の watched_ratio として全端末に返される
 +     * 報告の失敗は視聴の妨げにならないよう、エラー表示は行わない
@@ -1165,10 +1446,64 @@
 +
 +
 +    /**
++     * 録画のしおり一覧を取得する (ローカル改造)
++     * しおりはサーバー側で一元管理され、全端末で共有される
++     * @param video_id 録画番組の ID
++     * @returns しおり一覧 (取得に失敗した場合は空配列)
++     */
++    static async getBookmarks(video_id: number): Promise<IBookmark[]> {
++        const response = await APIClient.get<{ bookmarks: IBookmark[] }>(`/videos/${video_id}/bookmarks`);
++        if (response.type === 'error') {
++            return [];
++        }
++        return response.data.bookmarks;
++    }
++
++
++    /**
++     * 録画にしおりを追加する (ローカル改造)
++     * @param video_id 録画番組の ID
++     * @param position 再生位置 (秒)
++     * @param label ラベル (任意)
++     * @returns 追加されたしおり or 追加に失敗した場合は null
++     */
++    static async createBookmark(video_id: number, position: number, label: string = ''): Promise<IBookmark | null> {
++        const response = await APIClient.post<IBookmark>(`/videos/${video_id}/bookmarks`, { position, label });
++        if (response.type === 'error') {
++            return null;
++        }
++        return response.data;
++    }
++
++
++    /**
++     * 録画のしおりを削除する (ローカル改造)
++     * @param video_id 録画番組の ID
++     * @param bookmark_id しおりの ID
++     */
++    static async deleteBookmark(video_id: number, bookmark_id: string): Promise<void> {
++        await APIClient.delete(`/videos/${video_id}/bookmarks/${bookmark_id}`);
++    }
++
++
++    /**
++     * 録画結果 (成功 / 一部のみ / 失敗) の一覧を取得する (ローカル改造)
++     * 結果はサーバー側で EPGStation の予約・録画と照合して記録されている
++     * @returns 録画結果の一覧 (新しい順、取得に失敗した場合は空配列)
++     */
++    static async getRecordingResults(): Promise<IRecordingResult[]> {
++        const response = await APIClient.get<{ results: IRecordingResult[] }>('/videos/recording-results');
++        if (response.type === 'error') {
++            return [];
++        }
++        return response.data.results;
++    }
++
++
+     /**
       * 録画番組のメタデータを再解析する
       * @param video_id 録画番組の ID
-      * @returns メタデータ再解析に成功した場合は true
-@@ -432,6 +459,36 @@
+@@ -432,6 +537,36 @@ class Videos {
          }
          return true;
      }
@@ -1207,7 +1542,7 @@
  export default Videos;
 --- a/client/src/services/player/PlayerController.ts
 +++ b/client/src/services/player/PlayerController.ts
-@@ -11,6 +11,11 @@
+@@ -11,6 +11,11 @@ import CustomBufferController from '@/services/player/CustomBufferController';
  import CaptureManager from '@/services/player/managers/CaptureManager';
  import DocumentPiPManager from '@/services/player/managers/DocumentPiPManager';
  import ExcitementManager from '@/services/player/managers/ExcitementManager';
@@ -1219,7 +1554,7 @@
  import KeyboardShortcutManager from '@/services/player/managers/KeyboardShortcutManager';
  import LiveCommentManager from '@/services/player/managers/LiveCommentManager';
  import LiveDataBroadcastingManager from '@/services/player/managers/LiveDataBroadcastingManager';
-@@ -119,8 +124,13 @@
+@@ -119,8 +124,13 @@ class PlayerController {
          const player_store = usePlayerStore();
          if (player_store.selected_quality_profile_type !== null) {
              // 視聴画面内で手動変更済みなら、プレイヤー再作成後もその選択を使う
@@ -1234,10 +1569,11 @@
          } else {
              // 手動変更がない場合は、現在の回線種別から画質プロファイルを選ぶ
              // Wi-Fi 回線の場合や回線種別を取得できなかった場合は、Wi-Fi 向けの画質プロファイルを使う
-@@ -190,6 +200,35 @@
+@@ -189,6 +199,35 @@ class PlayerController {
+     }
  
  
-     /**
++    /**
 +     * ローカル改造: 現在再生中の画質を、現在の画質プロファイル (Wi-Fi / モバイル回線) の
 +     * デフォルト画質として端末ローカル設定に保存する
 +     * 次回プレイヤーを開いたとき (別の録画でも) に、最後に選んだ画質で開始できるようにするため
@@ -1266,11 +1602,10 @@
 +    }
 +
 +
-+    /**
+     /**
       * ライブ視聴: 許容する HTMLMediaElement の内部再生バッファの秒数
       */
-     private get live_playback_buffer_seconds(): number {
-@@ -988,6 +1027,7 @@
+@@ -997,6 +1036,7 @@ class PlayerController {
                  new DocumentPiPManager(this.player, this.playback_mode),
                  new KeyboardShortcutManager(this.player, this.playback_mode),
                  new MediaSessionManager(this.player, this.playback_mode),
@@ -1278,7 +1613,7 @@
              ];
          } else {
              // ビデオ視聴時に設定する PlayerManager
-@@ -998,6 +1038,11 @@
+@@ -1007,6 +1047,11 @@ class PlayerController {
                  new MediaSessionManager(this.player, this.playback_mode),
                  new SeekControlManager(this.player, this.playback_mode),
                  new ExcitementManager(this.player, this.playback_mode),
@@ -1290,7 +1625,7 @@
              ];
          }
  
-@@ -1480,6 +1525,13 @@
+@@ -1489,6 +1534,13 @@ class PlayerController {
          // 画質切り替え開始時のイベント
          this.player.on('quality_start', on_init_or_quality_change);
  
@@ -1304,7 +1639,7 @@
          // 動画の統計情報の表示/非表示を切り替える隠しコマンドのイベントハンドラーを登録
          // iOS / iPadOS Safari では DPlayer 側の contextmenu が長押ししても発火しないため、代替の表示手段として用意
          // 番組情報タブ内の NEXT >> を 500ms 以内に3回連続でタップすると統計情報の表示/非表示が切り替わる
-@@ -1723,6 +1775,8 @@
+@@ -1732,6 +1784,8 @@ class PlayerController {
              if (toggle_mobile_profile_input.checked) {
                  this.quality_profile_type = 'Cellular';
                  player_store.selected_quality_profile_type = this.quality_profile_type;
@@ -1313,7 +1648,7 @@
                  player_store.event_emitter.emit('PlayerRestartRequired', {
                      message: 'モバイル回線向けの画質プロファイルに切り替えました。',
                      // 他の通知と被らないように、メッセージを遅らせて表示する
-@@ -1735,6 +1789,8 @@
+@@ -1744,6 +1798,8 @@ class PlayerController {
              } else {
                  this.quality_profile_type = 'Wi-Fi';
                  player_store.selected_quality_profile_type = this.quality_profile_type;
@@ -1955,7 +2290,7 @@
 +export default HighlightReelManager;
 --- a/client/src/services/player/managers/SeekControlManager.ts
 +++ b/client/src/services/player/managers/SeekControlManager.ts
-@@ -8,7 +8,7 @@
+@@ -8,7 +8,7 @@ import useSettingsStore from '@/stores/SettingsStore';
  /**
   * ビデオ視聴時のスキップ (秒送り/秒戻し) ボタンと高速シーク、再生速度の永続化を提供する PlayerManager
   * ローカル改造 (2026-11-13): 家庭用レコーダー風の操作系を追加するために新設
@@ -1964,7 +2299,7 @@
   *   (中央の再生ボタンの隣が 10秒戻し / 30秒送り になる初期配置)
   * - 短押し: 設定秒数のスキップ (連続タップは 220ms 以内を合算して 1 回のシークにまとめる)
   * - 長押し (480ms 以上): 8倍相当の高速シーク (0.25 秒ごとに 2 秒進める/戻す、音声はミュート)
-@@ -89,13 +89,14 @@
+@@ -89,13 +89,14 @@ class SeekControlManager implements PlayerManager {
          const backward_seconds = settings_store.settings.video_seek_backward_seconds;
          const forward_seconds = settings_store.settings.video_seek_forward_seconds;
  
@@ -2266,7 +2601,7 @@
 +export default WatchedReportManager;
 --- a/client/src/stores/PlayerStore.ts
 +++ b/client/src/stores/PlayerStore.ts
-@@ -63,6 +63,13 @@
+@@ -63,6 +63,13 @@ export type PlayerEvents = {
          available: boolean;  // 盛り上がり区間が存在し、ダイジェスト再生が可能か
          active: boolean;  // ダイジェスト再生が有効か
      }
@@ -2282,27 +2617,27 @@
  
 --- a/client/src/stores/SettingsStore.ts
 +++ b/client/src/stores/SettingsStore.ts
-@@ -87,6 +87,7 @@
-     video_seek_backward_seconds: number;
+@@ -88,6 +88,7 @@ export interface ILocalClientSettings extends IClientSettings {
      video_seek_forward_seconds: number;
      video_playback_rate: number;
+     video_resume_rewind_seconds: number;
 +    last_quality_profile_type: 'Wi-Fi' | 'Cellular' | null;
      tv_streaming_quality: LiveStreamingQuality;
      tv_streaming_quality_cellular: LiveStreamingQuality;
      tv_data_saver_mode: boolean;
-@@ -246,6 +247,8 @@
-     video_seek_forward_seconds: 30,
-     // ビデオ視聴時の再生速度 (前回視聴時の速度を復元する) (Default: 1倍) (ローカル改造で追加)
+@@ -249,6 +250,8 @@ export const ILocalClientSettingsDefault: ILocalClientSettings = {
      video_playback_rate: 1,
+     // ビデオ視聴時の続き再生で手前に戻す秒数 (Default: 10秒) (ローカル改造で追加)
+     video_resume_rewind_seconds: 10,
 +    // 最後に手動で切り替えた画質プロファイル (ページ移動後も引き継ぐ) (Default: null = 回線種別から自動判定) (ローカル改造で追加)
 +    last_quality_profile_type: null,
  
      // ***** 設定 → 画質 *****
  
-@@ -407,6 +410,7 @@
-     // video_seek_backward_seconds: 同期無効 (ローカル改造で追加した端末ローカル設定)
+@@ -411,6 +414,7 @@ export const SYNCABLE_SETTINGS_KEYS: (keyof IClientSettings)[] = [
      // video_seek_forward_seconds: 同期無効 (ローカル改造で追加した端末ローカル設定)
      // video_playback_rate: 同期無効 (ローカル改造で追加した端末ローカル設定)
+     // video_resume_rewind_seconds: 同期無効 (ローカル改造で追加した端末ローカル設定)
 +    // last_quality_profile_type: 同期無効 (ローカル改造で追加した端末ローカル設定)
      // tv_streaming_quality: 同期無効
      // tv_streaming_quality_cellular: 同期無効
@@ -2348,6 +2683,63 @@
 +    });
 +    return computed(() => active() ? GetProgramWatchPath(program(), channel(), now.value) : null);
 +}
+--- a/client/src/views/Videos/Home.vue
++++ b/client/src/views/Videos/Home.vue
+@@ -10,6 +10,13 @@
+                         { name: 'ホーム', path: '/' },
+                         { name: 'ビデオをみる', path: '/videos/', disabled: true },
+                     ]" />
++                    <div class="videos-home-container__actions">
++                        <div v-ripple class="videos-home-container__action" @click="show_recording_results = true">
++                            <Icon icon="fluent:clipboard-task-16-filled" width="18px" height="18px" />
++                            <span>録画結果</span>
++                        </div>
++                    </div>
++                    <RecordingResultsDialog v-model:show="show_recording_results" />
+                     <RecordedProgramList
+                         class="videos-home-container__recent-programs"
+                         :class="{'videos-home-container__recent-programs--loading': recent_programs.length === 0 && is_loading}"
+@@ -65,6 +72,7 @@ import HeaderBar from '@/components/HeaderBar.vue';
+ import Navigation from '@/components/Navigation.vue';
+ import SPHeaderBar from '@/components/SPHeaderBar.vue';
+ import RecordedProgramList from '@/components/Videos/RecordedProgramList.vue';
++import RecordingResultsDialog from '@/components/Videos/RecordingResultsDialog.vue';
+ import { IRecordedProgram } from '@/services/Videos';
+ import Videos from '@/services/Videos';
+ import useSettingsStore from '@/stores/SettingsStore';
+@@ -82,6 +90,9 @@ const total_mylist_programs = ref(0);
+ const watched_programs = ref<IRecordedProgram[]>([]);
+ const total_watched_programs = ref(0);
+ 
++// 録画結果ダイアログの表示状態
++const show_recording_results = ref(false);
++
+ const is_loading = ref(true);
+ 
+ // 自動更新用の interval ID を保持
+@@ -257,4 +268,22 @@ onUnmounted(() => {
+     }
+ }
+ 
++.videos-home-container {
++    &__actions {
++        display: flex;
++        margin-top: 12px;
++    }
++    &__action {
++        display: inline-flex;
++        align-items: center;
++        gap: 6px;
++        padding: 7px 14px;
++        border-radius: 999px;
++        background: rgb(var(--v-theme-surface-variant));
++        font-size: 13.5px;
++        cursor: pointer;
++        user-select: none;
++    }
++}
++
+ </style>
 --- a/client/src/views/Videos/Programs.vue
 +++ b/client/src/views/Videos/Programs.vue
 @@ -11,6 +11,22 @@
@@ -2373,7 +2765,7 @@
                      <RecordedProgramList
                          title="録画番組一覧"
                          :programs="programs"
-@@ -36,6 +52,7 @@
+@@ -36,6 +52,7 @@ import Breadcrumbs from '@/components/Breadcrumbs.vue';
  import HeaderBar from '@/components/HeaderBar.vue';
  import Navigation from '@/components/Navigation.vue';
  import SPHeaderBar from '@/components/SPHeaderBar.vue';
@@ -2381,7 +2773,7 @@
  import RecordedProgramList from '@/components/Videos/RecordedProgramList.vue';
  import { IRecordedProgram, SortOrder } from '@/services/Videos';
  import Videos from '@/services/Videos';
-@@ -45,6 +62,13 @@
+@@ -45,6 +62,13 @@ import useUserStore from '@/stores/UserStore';
  const route = useRoute();
  const router = useRouter();
  
@@ -2395,7 +2787,7 @@
  // 録画番組のリスト
  const programs = ref<IRecordedProgram[]>([]);
  const total_programs = ref(0);
-@@ -58,6 +82,11 @@
+@@ -58,6 +82,11 @@ const sort_order = ref<'desc' | 'asc'>('desc');
  
  // 録画番組を取得
  const fetchPrograms = async () => {
@@ -2407,7 +2799,7 @@
      const result = await Videos.fetchVideos(sort_order.value, current_page.value);
      if (result) {
          programs.value = result.recorded_programs;
-@@ -66,6 +95,38 @@
+@@ -66,6 +95,38 @@ const fetchPrograms = async () => {
      is_loading.value = false;
  };
  
@@ -2446,7 +2838,7 @@
  // ページを更新
  const updatePage = async (page: number) => {
      current_page.value = page;
-@@ -108,7 +169,6 @@
+@@ -108,7 +169,6 @@ watch(() => route.query, async (newQuery) => {
  // 開始時に実行
  onMounted(async () => {
      // 事前にログイン状態を同期（トークンがあればユーザー情報を取得）
@@ -2454,7 +2846,7 @@
      await userStore.fetchUser();
  
      // クエリパラメータから初期値を設定
-@@ -154,4 +214,39 @@
+@@ -154,4 +214,39 @@ onMounted(async () => {
      }
  }
  
@@ -2756,15 +3148,15 @@
 +</style>
 --- a/server/app/app.py
 +++ b/server/app/app.py
-@@ -44,6 +44,7 @@
+@@ -44,6 +44,7 @@ from app.routers import (
      VideoStreamsRouter,
  )
  from app.streams.LiveStream import LiveStream
-+from app.utils import RecordingTrash
++from app.utils import RecordingResults, RecordingTrash
  from app.utils.edcb.EDCBTuner import EDCBTuner
  from app.utils.FastAPITaskUtil import repeat_every
  
-@@ -259,6 +260,16 @@
+@@ -259,6 +260,26 @@ async def UpdateChannelAndProgram():
      await Channel.updateJikkyoStatus()
      await Program.update(multiprocess=True)
  
@@ -2777,6 +3169,16 @@
 +)
 +async def PurgeExpiredTrash():
 +    await RecordingTrash.purgeExpired()
++
++# ローカル改造: 5分に1回、EPGStation の予約と録画を照合して録画結果 (成功 / 一部 / 失敗) を記録する
++@app.on_event('startup')
++@repeat_every(
++    seconds = 5 * 60,
++    wait_first = 60,
++    logger = logging.logger,
++)
++async def UpdateRecordingResults():
++    RecordingResults.reconcile()
 +
  # 30秒に1回、ニコニコ実況関連のステータスを更新する
  @app.on_event('startup')
@@ -2799,7 +3201,7 @@
  from app.utils.RecorderDeleteSync import DeleteSyncJob, GetRecorderDeleteSync
  
  
-@@ -115,3 +117,63 @@
+@@ -115,3 +117,63 @@ async def StopRecorderDeleteSyncWorker() -> None:
      service = GetRecorderDeleteSync()
      if service:
          await service.client.aclose()
@@ -2865,16 +3267,16 @@
 +    RecordingTrash.remove(video_id)
 --- a/server/app/routers/VideosRouter.py
 +++ b/server/app/routers/VideosRouter.py
-@@ -39,6 +39,8 @@
+@@ -39,6 +39,8 @@ from app.utils.RecorderDeleteSync import (
      RecordingProtection,
      RecordingProtectionUpdate,
  )
 +from app.utils import RecordingTrash
-+from app.utils import WatchedState
++from app.utils import Bookmarks, RecordingResults, WatchedState
  
  
  # ルーター
-@@ -188,6 +190,34 @@
+@@ -188,6 +190,34 @@ async def AttachProtectionStates(recorded_programs: list[schemas.RecordedProgram
          program.is_protected = states.get(program.id)
  
  
@@ -2909,7 +3311,7 @@
  def NormalizeSeriesTitle(title: str) -> str:
      """
      ローカル改造: タイトルからシリーズ判定用のキーを生成する
-@@ -454,6 +484,11 @@
+@@ -454,6 +484,11 @@ async def VideosAPI(
      ids には録画番組 ID のリストを指定できる。指定時は指定された ID の録画番組のみを返す。
      """
  
@@ -2921,7 +3323,7 @@
      # 生 SQL クエリを構築
      base_query = """
          SELECT
-@@ -576,16 +611,28 @@
+@@ -576,16 +611,28 @@ async def VideosAPI(
              total_params = ids
  
      else:
@@ -2959,7 +3361,7 @@
  
      try:
          # データベースから直接クエリを実行
-@@ -608,6 +655,8 @@
+@@ -608,6 +655,8 @@ async def VideosAPI(
  
          # ローカル改造: 削除保護の状態を応答に含める (ログアウト中でも保護バッジを表示するため)
          await AttachProtectionStates(recorded_programs)
@@ -2968,7 +3370,7 @@
  
          return schemas.RecordedPrograms(
              total = total,
-@@ -684,6 +733,13 @@
+@@ -684,6 +733,13 @@ async def VideosSearchAPI(
      if not keywords:  # キーワードが空の場合は全件取得と同じ挙動にする
          return await VideosAPI(order=order, page=page)
  
@@ -2982,7 +3384,7 @@
      # 生 SQL クエリを構築
      base_query = """
          SELECT
-@@ -793,6 +849,8 @@
+@@ -793,6 +849,8 @@ async def VideosSearchAPI(
  
          # ローカル改造: 削除保護の状態を応答に含める (ログアウト中でも保護バッジを表示するため)
          await AttachProtectionStates(recorded_programs)
@@ -2991,10 +3393,32 @@
  
          return schemas.RecordedPrograms(
              total = total,
-@@ -1021,6 +1079,25 @@
+@@ -807,6 +865,20 @@ async def VideosSearchAPI(
+         )
  
  
- @router.post(
++@router.get(
++    '/recording-results',
++    summary = '録画結果一覧 API',
++    response_model = schemas.RecordingResultList,
++)
++async def VideoRecordingResultsAPI():
++    """
++    ローカル改造: 予約録画の結果 (成功 / 一部のみ / 失敗) の一覧を返す
++    EPGStation は終了した予約や失敗を残さないため、KonomiTV 側で照合・記録した結果を返す
++    """
++
++    return {'results': RecordingResults.listResults()}
++
++
+ @router.get(
+     '/{video_id}',
+     summary = '録画番組 API',
+@@ -1020,6 +1092,74 @@ async def VideoJikkyoCommentsAPI(
+     )
+ 
+ 
++@router.post(
 +    '/{video_id}/watched',
 +    summary = '録画番組視聴進捗報告 API',
 +    status_code = status.HTTP_204_NO_CONTENT,
@@ -3013,29 +3437,81 @@
 +    WatchedState.report(recorded_program.id, report.position)
 +
 +
++@router.get(
++    '/{video_id}/bookmarks',
++    summary = '録画番組しおり一覧 API',
++    response_model = schemas.BookmarkList,
++)
++async def VideoBookmarksAPI(
++    recorded_program: Annotated[RecordedProgram, Depends(GetRecordedProgram)],
++):
++    """
++    ローカル改造: 録画に付けられたしおり (見返したい場面の再生位置) の一覧を返す
++    視聴状態と同様にサーバーで一元管理して世帯で共有するため、認証は要求しない
++    """
++
++    return {'bookmarks': Bookmarks.listFor(recorded_program.id)}
++
++
 +@router.post(
++    '/{video_id}/bookmarks',
++    summary = '録画番組しおり追加 API',
++    status_code = status.HTTP_201_CREATED,
++    response_model = schemas.Bookmark,
++)
++async def VideoBookmarkCreateAPI(
++    recorded_program: Annotated[RecordedProgram, Depends(GetRecordedProgram)],
++    create: schemas.BookmarkCreate,
++):
++    """
++    ローカル改造: 指定された再生位置にしおりを追加する
++    """
++
++    return Bookmarks.add(recorded_program.id, create.position, create.label)
++
++
++@router.delete(
++    '/{video_id}/bookmarks/{bookmark_id}',
++    summary = '録画番組しおり削除 API',
++    status_code = status.HTTP_204_NO_CONTENT,
++)
++async def VideoBookmarkDeleteAPI(
++    recorded_program: Annotated[RecordedProgram, Depends(GetRecordedProgram)],
++    bookmark_id: str,
++):
++    """
++    ローカル改造: しおりを 1 件削除する
++    """
++
++    Bookmarks.remove(recorded_program.id, bookmark_id)
++
++
+ @router.post(
      '/{video_id}/reanalyze',
      summary = '録画番組メタデータ再解析 API',
-     status_code = status.HTTP_204_NO_CONTENT,
-@@ -1160,6 +1237,8 @@
+@@ -1160,6 +1300,10 @@ async def VideoDeleteAPI(
          if not token:
              raise HTTPException(409, 'Open the deletion confirmation dialog before deleting')
          job = await service.delete(recorded_program.id, recorded_program.recorded_video.file_path, token)
 +        # ローカル改造: ゴミ箱経由で削除された場合に備え、ゴミ箱の登録も取り消す
 +        RecordingTrash.remove(recorded_program.id)
++        # ローカル改造: 削除された録画のしおりも一緒に消す
++        Bookmarks.forget(recorded_program.id)
          return Response(status_code=204, headers={'X-Recording-Sync': job.state})
      # 録画ファイルの情報を取得
      file_path = anyio.Path(recorded_program.recorded_video.file_path)
-@@ -1268,3 +1347,6 @@
+@@ -1268,3 +1412,8 @@ async def VideoDeleteAPI(
              status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
              detail = f'Failed to delete recorded program: {ex!s}',
          )
 +
 +    # ローカル改造: ゴミ箱経由で削除された場合に備え、ゴミ箱の登録も取り消す
 +    RecordingTrash.remove(recorded_program.id)
++    # ローカル改造: 削除された録画のしおりも一緒に消す
++    Bookmarks.forget(recorded_program.id)
 --- a/server/app/schemas.py
 +++ b/server/app/schemas.py
-@@ -216,6 +216,8 @@
+@@ -216,6 +216,8 @@ class RecordedProgram(PydanticModel):
      is_partially_recorded: bool = False
      # ローカル改造: 削除保護の状態 (一覧・検索 API でのみ付与される。None は状態不明)
      is_protected: bool | None = None
@@ -3044,7 +3520,7 @@
      # ローカル改造: 同じシリーズの前後の回の録画番組 ID (視聴画面の「前の話」「次の話」ボタン用、単体取得時のみ設定される)
      next_episode_id: int | None = None
      previous_episode_id: int | None = None
-@@ -247,6 +249,10 @@
+@@ -247,6 +249,44 @@ class RecordedPrograms(BaseModel):
      total: int
      recorded_programs: list[RecordedProgram]
  
@@ -3052,9 +3528,341 @@
 +    # ローカル改造: 視聴進捗の報告リクエスト (到達した再生位置、秒)
 +    position: float
 +
++class BookmarkCreate(BaseModel):
++    # ローカル改造: しおりの追加リクエスト (再生位置=秒、ラベルは任意)
++    position: float
++    label: str = ''
++
++class Bookmark(BaseModel):
++    # ローカル改造: しおり 1 件
++    id: str
++    position: float
++    label: str
++    created_at: float
++
++class BookmarkList(BaseModel):
++    # ローカル改造: しおり一覧のレスポンス
++    bookmarks: list[Bookmark]
++
++class RecordingResult(BaseModel):
++    # ローカル改造: 録画結果 1 件 (status は success / partial / failed)
++    reserve_id: int
++    recorded_id: int | None
++    name: str
++    channel_name: str
++    start_at: float
++    end_at: float
++    status: str
++    duration: float | None
++    error_count: int | None
++    drop_count: int | None
++    scrambling_count: int | None
++
++class RecordingResultList(BaseModel):
++    # ローカル改造: 録画結果一覧のレスポンス
++    results: list[RecordingResult]
++
  # ***** シリーズ *****
  
  class Series(PydanticModel):
+--- a/server/app/utils/Bookmarks.py
++++ b/server/app/utils/Bookmarks.py
+@@ -0,0 +1,90 @@
++"""録画のしおり (ブックマーク) のサーバー側管理。
++
++ローカル改造 (2026-11-15): 見返したい場面の再生位置を端末ごとのローカル保存ではなく
++サーバーで一元管理し、どの端末からでも同じしおりを使えるようにするために新設した。
++視聴状態 (WatchedState) と同様、市販レコーダーと同じく世帯で 1 つの状態として扱う。
++状態は DATA_DIR/bookmarks.json に保存する。
++"""
++
++import json
++import logging
++import threading
++import time
++import uuid
++
++from app.constants import DATA_DIR
++
++
++STATE_PATH = DATA_DIR / 'bookmarks.json'
++
++_lock = threading.Lock()
++
++
++def _loadState() -> dict[int, list[dict]]:
++    """しおりを読み込む。ファイルがない・壊れている場合は空として扱う。"""
++    try:
++        raw = json.loads(STATE_PATH.read_text(encoding='utf-8'))
++        return {int(video_id): entries for video_id, entries in raw.items()}
++    except FileNotFoundError:
++        return {}
++    except Exception:
++        logging.exception('[Bookmarks] Failed to load bookmarks.')
++        return {}
++
++
++def _saveState(state: dict[int, list[dict]]) -> None:
++    """しおりを保存する (一時ファイルに書いてから置き換える)。"""
++    tmp_path = STATE_PATH.with_suffix('.json.tmp')
++    tmp_path.write_text(
++        json.dumps({str(video_id): entries for video_id, entries in state.items()}, ensure_ascii=False, indent=2),
++        encoding='utf-8',
++    )
++    tmp_path.replace(STATE_PATH)
++
++
++def listFor(video_id: int) -> list[dict]:
++    """指定された録画のしおり一覧を、再生位置の昇順で返す。"""
++    entries = _loadState().get(video_id, [])
++    return sorted(entries, key=lambda entry: entry['position'])
++
++
++def add(video_id: int, position: float, label: str) -> dict:
++    """しおりを追加し、追加したしおりを返す。"""
++    bookmark = {
++        'id': uuid.uuid4().hex,
++        'position': float(position),
++        'label': label or '',
++        'created_at': time.time(),
++    }
++    with _lock:
++        state = _loadState()
++        state.setdefault(video_id, []).append(bookmark)
++        _saveState(state)
++    return bookmark
++
++
++def remove(video_id: int, bookmark_id: str) -> bool:
++    """しおりを 1 件削除する。削除できたら True を返す。"""
++    with _lock:
++        state = _loadState()
++        entries = state.get(video_id)
++        if not entries:
++            return False
++        new_entries = [entry for entry in entries if entry['id'] != bookmark_id]
++        if len(new_entries) == len(entries):
++            return False
++        if new_entries:
++            state[video_id] = new_entries
++        else:
++            del state[video_id]
++        _saveState(state)
++    return True
++
++
++def forget(video_id: int) -> None:
++    """録画のしおりをすべて削除する (録画自体の削除に合わせて呼ぶ想定)。"""
++    with _lock:
++        state = _loadState()
++        if video_id in state:
++            del state[video_id]
++            _saveState(state)
+--- a/server/app/utils/RecordingResults.py
++++ b/server/app/utils/RecordingResults.py
+@@ -0,0 +1,202 @@
++"""録画結果 (成功 / 一部のみ / 失敗) の記録。
++
++ローカル改造 (2026-11-15): EPGStation は終了した予約や失敗した録画を DB に残さないため、
++「予約したのに録れなかった」ことが後から分からない。そこで KonomiTV 側で
++EPGStation の DB (SQLite、読み取り専用) を定期的に照合し、放送前の予約の控えを取り、
++終了後に録画の有無・尺・ドロップ数から結果を判定して DATA_DIR/recording-results.json に
++記録する。市販レコーダーの「録画結果」一覧に相当する機能。
++
++判定ルール:
++- 録画ファイルがあり、尺が予定の 95% 以上: success
++- 録画ファイルはあるが尺が予定の 95% 未満: partial
++- 終了から猶予 (10 分) を過ぎても録画ファイルがない: failed
++過去の録画 (recorded テーブルに残っているもの) は初回照合時に成功 / 一部として取り込む。
++失敗は EPGStation 側に記録が残らないため、この照合が動いている期間分しか記録できない。
++"""
++
++import json
++import logging
++import os
++import re
++import sqlite3
++import threading
++import time
++from pathlib import Path
++
++from app.constants import DATA_DIR
++
++
++STATE_PATH = DATA_DIR / 'recording-results.json'
++
++# 終了からこの時間 (秒) は録画ファイルの確定待ちとする
++GRACE_SECONDS = 10 * 60
++# 保持する結果の最大件数
++MAX_RESULTS = 100
++
++_lock = threading.Lock()
++
++
++def _epgstationDBPath() -> Path | None:
++    """EPGStation の SQLite DB のパスを返す。見つからなければ None。"""
++    env_path = os.environ.get('KONOMITV_EPGSTATION_DB_PATH')
++    if env_path:
++        path = Path(env_path)
++        return path if path.exists() else None
++    path = Path.home() / 'EPGStation' / 'data' / 'database.db'
++    return path if path.exists() else None
++
++
++def _loadState() -> dict:
++    """記録済みの状態を読み込む。ファイルがない・壊れている場合は空として扱う。"""
++    try:
++        raw = json.loads(STATE_PATH.read_text(encoding='utf-8'))
++        return {'pending': raw.get('pending', {}), 'results': raw.get('results', [])}
++    except FileNotFoundError:
++        return {'pending': {}, 'results': []}
++    except Exception:
++        logging.exception('[RecordingResults] Failed to load recording results.')
++        return {'pending': {}, 'results': []}
++
++
++def _saveState(state: dict) -> None:
++    """状態を保存する (一時ファイルに書いてから置き換える)。"""
++    tmp_path = STATE_PATH.with_suffix('.json.tmp')
++    tmp_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
++    tmp_path.replace(STATE_PATH)
++
++
++def _cleanName(name: str | None) -> str:
++    """EPGStation の番組名に含まれる \\uXXXX 形式のリテラルを実文字に戻す。"""
++    if not name:
++        return ''
++    return re.sub(r'\\u([0-9a-fA-F]{4})', lambda match: chr(int(match.group(1), 16)), name)
++
++
++def _dropCounts(connection: sqlite3.Connection, drop_log_file_id) -> dict:
++    """ドロップログの件数を取得する。ログがなければ全て None。"""
++    counts = {'error_count': None, 'drop_count': None, 'scrambling_count': None}
++    if drop_log_file_id is None:
++        return counts
++    row = connection.execute(
++        'SELECT errorCnt, dropCnt, scramblingCnt FROM drop_log_file WHERE id = ?',
++        (drop_log_file_id,),
++    ).fetchone()
++    if row is not None:
++        counts = {'error_count': row[0], 'drop_count': row[1], 'scrambling_count': row[2]}
++    return counts
++
++
++def _classify(scheduled_seconds: float, duration_seconds: float) -> str:
++    """予定尺と実尺から成功 / 一部を判定する。"""
++    if scheduled_seconds > 0 and duration_seconds >= scheduled_seconds * 0.95:
++        return 'success'
++    return 'partial'
++
++
++def reconcile() -> None:
++    """EPGStation の DB と照合し、予約の控え取りと結果の判定を行う。"""
++    db_path = _epgstationDBPath()
++    if db_path is None:
++        return
++    try:
++        connection = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True, timeout=5)
++        try:
++            channels = {row[0]: _cleanName(row[1]) for row in connection.execute('SELECT id, name FROM channel')}
++            reserves = connection.execute('SELECT id, name, channelId, startAt, endAt, isSkip FROM reserve').fetchall()
++            now_seconds = time.time()
++
++            with _lock:
++                state = _loadState()
++                pending: dict = state['pending']
++                results: list = state['results']
++                known_result_ids = {entry['reserve_id'] for entry in results}
++                current_reserve_ids = set()
++
++                # 放送前の予約の控えを取る (スキップ指定の予約は対象外)
++                for reserve_id, name, channel_id, start_at, end_at, is_skip in reserves:
++                    current_reserve_ids.add(reserve_id)
++                    if is_skip:
++                        pending.pop(str(reserve_id), None)
++                        continue
++                    pending[str(reserve_id)] = {
++                        'reserve_id': reserve_id,
++                        'name': _cleanName(name),
++                        'channel_name': channels.get(channel_id, ''),
++                        'start_at': start_at / 1000,
++                        'end_at': end_at / 1000,
++                    }
++
++                # 開始前に予約が消えたものはキャンセルされたとみなして控えから外す
++                for key in list(pending.keys()):
++                    entry = pending[key]
++                    if entry['reserve_id'] not in current_reserve_ids and now_seconds < entry['start_at']:
++                        del pending[key]
++
++                # 終了 + 猶予を過ぎた控えを結果として確定する
++                for key in list(pending.keys()):
++                    entry = pending[key]
++                    if now_seconds < entry['end_at'] + GRACE_SECONDS:
++                        continue
++                    recorded = connection.execute(
++                        'SELECT id, duration, dropLogFileId FROM recorded WHERE reserveId = ? AND isRecording = 0',
++                        (entry['reserve_id'],),
++                    ).fetchone()
++                    result = {**entry, 'resolved_at': now_seconds}
++                    if recorded is None:
++                        result.update({
++                            'status': 'failed',
++                            'recorded_id': None,
++                            'duration': None,
++                            'error_count': None,
++                            'drop_count': None,
++                            'scrambling_count': None,
++                        })
++                    else:
++                        duration_seconds = (recorded[1] or 0) / 1000
++                        result.update({
++                            'status': _classify(entry['end_at'] - entry['start_at'], duration_seconds),
++                            'recorded_id': recorded[0],
++                            'duration': duration_seconds,
++                            **_dropCounts(connection, recorded[2]),
++                        })
++                    if entry['reserve_id'] not in known_result_ids:
++                        results.append(result)
++                        known_result_ids.add(entry['reserve_id'])
++                    del pending[key]
++
++                # 過去の録画を結果として取り込む (控え取り開始前に終わった予約分)
++                for recorded in connection.execute(
++                    'SELECT id, reserveId, name, channelId, startAt, endAt, duration, dropLogFileId'
++                    ' FROM recorded WHERE isRecording = 0 AND reserveId IS NOT NULL'
++                ):
++                    recorded_id, reserve_id, name, channel_id, start_at, end_at, duration, drop_log_file_id = recorded
++                    if reserve_id in known_result_ids or str(reserve_id) in pending:
++                        continue
++                    duration_seconds = (duration or 0) / 1000
++                    results.append({
++                        'reserve_id': reserve_id,
++                        'name': _cleanName(name),
++                        'channel_name': channels.get(channel_id, ''),
++                        'start_at': start_at / 1000,
++                        'end_at': end_at / 1000,
++                        'resolved_at': now_seconds,
++                        'status': _classify((end_at - start_at) / 1000, duration_seconds),
++                        'recorded_id': recorded_id,
++                        'duration': duration_seconds,
++                        **_dropCounts(connection, drop_log_file_id),
++                    })
++                    known_result_ids.add(reserve_id)
++
++                # 新しい順に並べ替えて上限まで保持する
++                results.sort(key=lambda entry: entry['start_at'], reverse=True)
++                state['results'] = results[:MAX_RESULTS]
++                _saveState(state)
++        finally:
++            connection.close()
++    except Exception:
++        logging.exception('[RecordingResults] Failed to reconcile recording results.')
++
++
++def listResults() -> list[dict]:
++    """記録済みの録画結果を新しい順で返す。"""
++    return _loadState()['results']
 --- a/server/app/utils/RecordingTrash.py
 +++ b/server/app/utils/RecordingTrash.py
 @@ -0,0 +1,135 @@

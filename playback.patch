@@ -17,7 +17,7 @@
                  </div>
                  <div v-else-if="program.recorded_video.status === 'AnalysisFailed'" class="recorded-program__thumbnail-status recorded-program__thumbnail-status--failed">
                      <Icon icon="fluent:error-circle-12-regular" width="15px" height="15px" />
-@@ -844,7 +844,19 @@
+@@ -844,7 +844,19 @@ const deleteVideo = async () => {
          }
      }
  
@@ -57,7 +57,7 @@
              </div>
          </section>
          <section class="program-detail-container">
-@@ -95,6 +105,11 @@
+@@ -95,6 +105,11 @@ export default defineComponent({
          },
      },
      methods: {
@@ -71,7 +71,7 @@
              const program = this.playerStore.recorded_program;
 --- a/client/src/services/Videos.ts
 +++ b/client/src/services/Videos.ts
-@@ -121,6 +121,8 @@
+@@ -121,6 +121,8 @@ export interface IRecordedProgram {
      recording_end_margin: number;
      is_partially_recorded: boolean;
      is_protected: boolean | null;
@@ -80,7 +80,7 @@
      channel: IChannel | null;
      network_id: number | null;
      service_id: number | null;
-@@ -154,6 +156,8 @@
+@@ -154,6 +156,8 @@ export const IRecordedProgramDefault: IRecordedProgram = {
      recording_end_margin: 0,
      is_partially_recorded: false,
      is_protected: null,
@@ -91,7 +91,7 @@
      service_id: null,
 --- a/client/src/services/player/PlayerController.ts
 +++ b/client/src/services/player/PlayerController.ts
-@@ -15,6 +15,7 @@
+@@ -15,6 +15,7 @@ import LiveCommentManager from '@/services/player/managers/LiveCommentManager';
  import LiveDataBroadcastingManager from '@/services/player/managers/LiveDataBroadcastingManager';
  import LiveEventManager from '@/services/player/managers/LiveEventManager';
  import MediaSessionManager from '@/services/player/managers/MediaSessionManager';
@@ -99,7 +99,23 @@
  import PlayerManager from '@/services/player/PlayerManager';
  import Videos from '@/services/Videos';
  import useChannelsStore from '@/stores/ChannelsStore';
-@@ -994,6 +995,7 @@
+@@ -263,6 +264,15 @@ class PlayerController {
+                 );
+                 if (history) {
+                     seek_seconds = history.last_playback_position;
++                    // 続き再生時は設定秒数だけ手前から再開し、直前の会話や場面の流れを思い出せるようにする (ローカル改造)
++                    // ただし本編開始位置 (録画開始マージン + 2秒) より手前には戻さない
++                    const resume_rewind_seconds = settings_store.settings.video_resume_rewind_seconds ?? 0;
++                    if (resume_rewind_seconds > 0 && seek_seconds > player_store.recorded_program.recording_start_margin + 2) {
++                        seek_seconds = Math.max(
++                            player_store.recorded_program.recording_start_margin + 2,
++                            seek_seconds - resume_rewind_seconds,
++                        );
++                    }
+                     console.log(`\u001b[31m[PlayerController] Seeking to ${seek_seconds} seconds. (Watched History)`);
+                 } else {
+                     seek_seconds = player_store.recorded_program.recording_start_margin + 2;
+@@ -994,6 +1004,7 @@ class PlayerController {
                  new DocumentPiPManager(this.player, this.playback_mode),
                  new KeyboardShortcutManager(this.player, this.playback_mode),
                  new MediaSessionManager(this.player, this.playback_mode),
@@ -109,7 +125,7 @@
  
 --- a/client/src/services/player/managers/KeyboardShortcutManager.ts
 +++ b/client/src/services/player/managers/KeyboardShortcutManager.ts
-@@ -176,14 +176,14 @@
+@@ -176,14 +176,14 @@ class KeyboardShortcutManager implements PlayerManager {
                  this.player.video.currentTime = this.player.video.currentTime + 0.5;
              }},
  
@@ -448,17 +464,18 @@
 +export default SeekControlManager;
 --- a/client/src/stores/SettingsStore.ts
 +++ b/client/src/stores/SettingsStore.ts
-@@ -84,6 +84,9 @@
+@@ -84,6 +84,10 @@ export interface ILocalClientSettings extends IClientSettings {
      tv_panel_active_tab: 'Program' | 'Channel' | 'Comment' | 'Twitter';
      video_panel_active_tab: 'RecordedProgram' | 'Series' | 'Comment' | 'Twitter';
      video_watched_history_max_count: number;
 +    video_seek_backward_seconds: number;
 +    video_seek_forward_seconds: number;
 +    video_playback_rate: number;
++    video_resume_rewind_seconds: number;
      tv_streaming_quality: LiveStreamingQuality;
      tv_streaming_quality_cellular: LiveStreamingQuality;
      tv_data_saver_mode: boolean;
-@@ -237,6 +240,12 @@
+@@ -237,6 +241,14 @@ export const ILocalClientSettingsDefault: ILocalClientSettings = {
      // 視聴履歴の保持件数 (Default: 50件)
      // この値を超えると、最も古い視聴履歴から自動的に削除される
      video_watched_history_max_count: 50,
@@ -468,22 +485,25 @@
 +    video_seek_forward_seconds: 30,
 +    // ビデオ視聴時の再生速度 (前回視聴時の速度を復元する) (Default: 1倍) (ローカル改造で追加)
 +    video_playback_rate: 1,
++    // ビデオ視聴時の続き再生で手前に戻す秒数 (Default: 10秒) (ローカル改造で追加)
++    video_resume_rewind_seconds: 10,
  
      // ***** 設定 → 画質 *****
  
-@@ -395,6 +404,9 @@
+@@ -395,6 +407,10 @@ export const SYNCABLE_SETTINGS_KEYS: (keyof IClientSettings)[] = [
      'tv_panel_active_tab',
      'video_panel_active_tab',
      'video_watched_history_max_count',
 +    // video_seek_backward_seconds: 同期無効 (ローカル改造で追加した端末ローカル設定)
 +    // video_seek_forward_seconds: 同期無効 (ローカル改造で追加した端末ローカル設定)
 +    // video_playback_rate: 同期無効 (ローカル改造で追加した端末ローカル設定)
++    // video_resume_rewind_seconds: 同期無効 (ローカル改造で追加した端末ローカル設定)
      // tv_streaming_quality: 同期無効
      // tv_streaming_quality_cellular: 同期無効
      // tv_data_saver_mode: 同期無効
 --- a/client/src/views/Settings/General.vue
 +++ b/client/src/views/Settings/General.vue
-@@ -150,6 +150,49 @@
+@@ -150,6 +150,61 @@
                      v-model.number="settingsStore.settings.video_watched_history_max_count">
                  </v-text-field>
              </div>
@@ -530,12 +550,24 @@
 +                    v-model="settingsStore.settings.video_playback_rate">
 +                </v-select>
 +            </div>
++            <div class="settings__item">
++                <div class="settings__item-heading">続き再生の巻き戻し秒数</div>
++                <div class="settings__item-label">
++                    録画番組を前回の続きから再生するときに、何秒手前から再開するかを設定します。直前の会話や場面の流れを思い出しやすくなります。デフォルトは 10 秒です。<br>
++                    0 秒にすると巻き戻しなし (従来通り) になります。このデバイス (ブラウザ) にのみ保存されます。
++                </div>
++                <v-select class="settings__item-form" color="primary" variant="outlined" hide-details
++                    :density="is_form_dense ? 'compact' : 'default'"
++                    :items="[0, 5, 10, 15, 30]" suffix="秒"
++                    v-model="settingsStore.settings.video_resume_rewind_seconds">
++                </v-select>
++            </div>
              <v-divider class="mt-6"></v-divider>
              <div class="settings__item">
                  <div class="settings__item-heading">設定をエクスポート</div>
 --- a/server/app/metadata/MetadataAnalyzer.py
 +++ b/server/app/metadata/MetadataAnalyzer.py
-@@ -16,7 +16,7 @@
+@@ -16,7 +16,7 @@ from app.config import Config, LoadConfig
  from app.constants import JST, LIBRARY_PATH
  from app.metadata.TSInfoAnalyzer import TSInfoAnalyzer
  from app.utils import ClosestMultiple
@@ -544,7 +576,7 @@
  from app.utils.TSKeyFrameSeeker import TSKeyFrameSeeker, TSStreamInfo
  
  
-@@ -685,134 +685,10 @@
+@@ -685,134 +685,10 @@ class MetadataAnalyzer:
  
      def __calculateTSFileDuration(self, search_block_size: int = 1024 * 1024) -> tuple[float, int] | None:
          """
@@ -684,7 +716,7 @@
      def __detectTSVideoStreamChanges(self, end_ts_offset: int | None) -> bool:
 --- a/server/app/routers/VideoStreamsRouter.py
 +++ b/server/app/routers/VideoStreamsRouter.py
-@@ -87,6 +87,10 @@
+@@ -87,6 +87,10 @@ async def VideoHLSPlaylistAPI(
          is_new_session_allowed = True,
      )
  
@@ -705,7 +737,7 @@
  from datetime import datetime
  from email.utils import parsedate
  from typing import Annotated, Any, Literal
-@@ -187,6 +188,91 @@
+@@ -187,6 +188,91 @@ async def AttachProtectionStates(recorded_programs: list[schemas.RecordedProgram
          program.is_protected = states.get(program.id)
  
  
@@ -797,7 +829,7 @@
  async def GetRecordedProgram(video_id: Annotated[int, Path(description='録画番組の ID 。')]) -> RecordedProgram:
      """ 録画番組 ID から録画番組情報を取得する """
  
-@@ -734,6 +820,9 @@
+@@ -734,6 +820,9 @@ async def VideoAPI(
      指定された録画番組を取得する。
      """
  
@@ -809,7 +841,7 @@
  
 --- a/server/app/schemas.py
 +++ b/server/app/schemas.py
-@@ -216,6 +216,9 @@
+@@ -216,6 +216,9 @@ class RecordedProgram(PydanticModel):
      is_partially_recorded: bool = False
      # ローカル改造: 削除保護の状態 (一覧・検索 API でのみ付与される。None は状態不明)
      is_protected: bool | None = None
@@ -821,7 +853,7 @@
      service_id: int | None = None  # MPEG-TS 形式かつ SDT の解析に成功した場合のみセット
 --- a/server/app/streams/VideoStream.py
 +++ b/server/app/streams/VideoStream.py
-@@ -29,6 +29,7 @@
+@@ -29,6 +29,7 @@ from app.streams.VideoEncodingTask import VideoEncodingTask
  from app.streams.VideoSegmentPlanner import VideoSegmentPlanner
  from app.utils import SetTimeout
  from app.utils.MP4KeyFrameParser import MP4KeyFrameParser
@@ -829,7 +861,7 @@
  from app.utils.TSKeyFrameSeeker import TSKeyFrameSeeker, TSStreamInfo
  
  
-@@ -98,6 +99,11 @@
+@@ -98,6 +99,11 @@ class VideoStream:
      ## DB 書き込みを HLS セグメントごとに発生させず、再生済み範囲をある程度まとめて保存する
      SEGMENT_MAP_SAVE_BATCH_SIZE: ClassVar[int] = 16
  
@@ -841,7 +873,7 @@
      # 録画視聴セッションのインスタンスが入る、セッション ID をキーとした辞書
      # この辞書に録画視聴セッションに関する全てのデータが格納されている
      __instances: ClassVar[dict[str, VideoStream]] = {}
-@@ -156,6 +162,12 @@
+@@ -156,6 +162,12 @@ class VideoStream:
              # HLS セグメントを格納するリスト
              instance._segments = []
  
@@ -854,7 +886,7 @@
              # segment_map はシーケンス番号で参照するため、視聴セッション内では辞書として保持する
              ## DB には JSON 配列のまま保存し、検索時だけ辞書化することで保存形式を増やさずに参照コストを下げる
              instance._segment_map_by_sequence = {
-@@ -255,6 +267,9 @@
+@@ -255,6 +267,9 @@ class VideoStream:
          self.encoding_options: StreamEncodingOptions
          self._segment_duration_seconds: float
          self._segments: list[VideoStreamSegment]
@@ -864,7 +896,7 @@
          self._segment_map_by_sequence: dict[int, SegmentMapEntry]
          self._ts_stream_info: TSStreamInfo | None
          self._ts_source_base_dts: int | None
-@@ -408,42 +423,124 @@
+@@ -408,42 +423,124 @@ class VideoStream:
              return (0, 0)
  
  
@@ -882,14 +914,11 @@
  
          Args:
 -            cache_key (str | None): キャッシュ制御用のキー (None の場合は新しいキーを生成する)
--
++            fresh_recorded_program (RecordedProgram): DB から再取得した最新の録画番組情報
++        """
+ 
 -        Returns:
 -            str: 仮想 HLS M3U8 プレイリスト
-+            fresh_recorded_program (RecordedProgram): DB から再取得した最新の録画番組情報
-         """
- 
--        # セッションのアクティブ状態を維持する
--        self.keepAlive()
 +        # 録画中でないセッションでは何もしない (録画中だったセッションの完了検知のため、
 +        # セッション開始時点で録画中だった場合のみ継続して確認する)
 +        if self._is_recording is False and fresh_recorded_program.recorded_video.status != 'Recording':
@@ -927,11 +956,13 @@
 +
 +
 +    def _buildSegmentsUpTo(self, duration_seconds: float) -> None:
-+        """
+         """
 +        ローカル改造: 仮想 HLS セグメントを指定された再生可能尺まで構築・延長する
 +        既に構築済みのセグメントには一切手を付けず、末尾に不足分だけを追加する
 +        (構築済みセグメントの尺やエンコード状態を変更しないため、再生中のセッションでも安全に延長できる)
-+
+ 
+-        # セッションのアクティブ状態を維持する
+-        self.keepAlive()
 +        Args:
 +            duration_seconds (float): 再生可能尺 (秒)
 +        """
@@ -1004,7 +1035,7 @@
  
          # キャッシュキーが指定されていない場合は UUID の - で区切って一番左側のみを使う
          if cache_key is None:
-@@ -453,7 +550,11 @@
+@@ -453,7 +550,11 @@ class VideoStream:
          virtual_playlist = ''
          virtual_playlist += '#EXTM3U\n'
          virtual_playlist += '#EXT-X-VERSION:6\n'
@@ -1017,7 +1048,7 @@
  
          # HLS セグメントの実時間の最大値を指定する (小数点以下は切り上げ)
          target_duration = max(s.duration_seconds for s in self._segments)
-@@ -466,7 +567,9 @@
+@@ -466,7 +567,9 @@ class VideoStream:
              # キャッシュ避けのためにキャッシュキーを付与する
              virtual_playlist += f'segment?session_id={self.session_id}&sequence={segment.sequence_index}&cache_key={cache_key}\n'
  
@@ -1043,7 +1074,7 @@
  from tortoise import Tortoise, connections
  from tortoise.exceptions import ConfigurationError
  from tortoise.expressions import Q
-@@ -700,3 +703,137 @@
+@@ -700,3 +703,137 @@ for _region_name, _region_ids in TSInformation.TERRESTRIAL_REGION_TO_REGION_IDS.
          if _region_id not in TSInformation.REGION_ID_TO_REGION_NAMES:
              TSInformation.REGION_ID_TO_REGION_NAMES[_region_id] = []
          TSInformation.REGION_ID_TO_REGION_NAMES[_region_id].append(_region_name)
