@@ -1,0 +1,242 @@
+--- a/client/src/services/Videos.ts
++++ b/client/src/services/Videos.ts
+@@ -137,6 +137,14 @@ export interface IRecordingResult {
+     scrambling_count: number | null;
+ }
+ 
++// ローカル改造: 録画ストレージの容量情報 (サーバー側で取得される)
++export interface IStorageStatus {
++    total_bytes: number;  // ストレージの全体容量 (バイト)
++    used_bytes: number;  // ストレージの使用量 (バイト)
++    free_bytes: number;  // ストレージの空き容量 (バイト)
++    recordings_bytes: number;  // 録画ファイル自体の合計サイズ (バイト)
++}
++
+ export interface IRecordedProgram {
+     id: number;
+     recorded_video: IRecordedVideo;
+@@ -429,6 +437,19 @@ class Videos {
+     }
+ 
+ 
++    /**
++     * 録画ストレージの容量情報を取得する (ローカル改造)
++     * @returns 容量情報 (取得に失敗した場合は null)
++     */
++    static async getStorageStatus(): Promise<IStorageStatus | null> {
++        const response = await APIClient.get<IStorageStatus>('/videos/storage-status');
++        if (response.type === 'error') {
++            return null;
++        }
++        return response.data;
++    }
++
++
+     /**
+      * 録画番組のメタデータを再解析する
+      * @param video_id 録画番組の ID
+--- a/client/src/views/Videos/Home.vue
++++ b/client/src/views/Videos/Home.vue
+@@ -15,6 +15,10 @@
+                             <Icon icon="fluent:clipboard-task-16-filled" width="18px" height="18px" />
+                             <span>録画結果</span>
+                         </div>
++                        <div v-if="storage_status" class="videos-home-container__storage">
++                            <Icon icon="fluent:database-20-regular" width="16px" height="16px" />
++                            <span>録画 {{ formatBytes(storage_status.recordings_bytes) }} / {{ formatBytes(storage_status.total_bytes) }}（空き {{ formatBytes(storage_status.free_bytes) }}）</span>
++                        </div>
+                     </div>
+                     <RecordingResultsDialog v-model:show="show_recording_results" />
+                     <RecordedProgramList
+@@ -73,7 +77,7 @@ import Navigation from '@/components/Navigation.vue';
+ import SPHeaderBar from '@/components/SPHeaderBar.vue';
+ import RecordedProgramList from '@/components/Videos/RecordedProgramList.vue';
+ import RecordingResultsDialog from '@/components/Videos/RecordingResultsDialog.vue';
+-import { IRecordedProgram } from '@/services/Videos';
++import { IRecordedProgram, IStorageStatus } from '@/services/Videos';
+ import Videos from '@/services/Videos';
+ import useSettingsStore from '@/stores/SettingsStore';
+ import useUserStore from '@/stores/UserStore';
+@@ -93,6 +97,28 @@ const total_watched_programs = ref(0);
+ // 録画結果ダイアログの表示状態
+ const show_recording_results = ref(false);
+ 
++// 録画ストレージの容量情報 (ローカル改造、取得できなかった場合は null のまま表示しない)
++const storage_status = ref<IStorageStatus | null>(null);
++
++// バイト数を人が読みやすい単位 (GB / TB) に整形する
++const formatBytes = (bytes: number): string => {
++    if (bytes >= 1024 ** 4) {
++        return `${(bytes / 1024 ** 4).toFixed(1)} TB`;
++    }
++    if (bytes >= 1024 ** 3) {
++        return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
++    }
++    if (bytes >= 1024 ** 2) {
++        return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
++    }
++    return `${bytes} B`;
++};
++
++// 録画ストレージの容量情報を取得
++const fetchStorageStatus = async () => {
++    storage_status.value = await Videos.getStorageStatus();
++};
++
+ const is_loading = ref(true);
+ 
+ // 自動更新用の interval ID を保持
+@@ -171,6 +197,7 @@ const sectionUpdaters = {
+     recentPrograms: fetchRecentPrograms,
+     mylistPrograms: fetchMylistPrograms,
+     watchedPrograms: fetchWatchedPrograms,
++    storageStatus: fetchStorageStatus,
+ } as const;
+ 
+ // 全セクションの更新を実行
+@@ -284,6 +311,16 @@ onUnmounted(() => {
+         cursor: pointer;
+         user-select: none;
+     }
++    &__storage {
++        display: inline-flex;
++        align-items: center;
++        gap: 6px;
++        margin-left: 14px;
++        padding: 7px 0px;
++        font-size: 13.5px;
++        opacity: 0.75;
++        user-select: none;
++    }
+ }
+ 
+ </style>
+--- a/server/app/routers/VideosRouter.py
++++ b/server/app/routers/VideosRouter.py
+@@ -40,6 +40,7 @@ from app.utils.RecorderDeleteSync import (
+     RecordingProtectionUpdate,
+ )
+ from app.utils import RecordingTrash
++from app.utils.StorageStatus import StorageStatus
+ from app.utils import Bookmarks, RecordingResults, WatchedState
+ 
+ 
+@@ -879,6 +880,25 @@ async def VideoRecordingResultsAPI():
+     return {'results': RecordingResults.listResults()}
+ 
+ 
++@router.get(
++    '/storage-status',
++    summary = '録画ストレージ容量 API',
++    response_model = schemas.StorageStatus,
++)
++async def VideoStorageStatusAPI():
++    """
++    ローカル改造: 録画ファイルが置かれているストレージの容量情報を返す
++    """
++
++    storage_status = await StorageStatus.fetch()
++    if storage_status is None:
++        raise HTTPException(
++            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
++            detail = 'Failed to get storage status',
++        )
++    return storage_status
++
++
+ @router.get(
+     '/{video_id}',
+     summary = '録画番組 API',
+--- a/server/app/schemas.py
++++ b/server/app/schemas.py
+@@ -290,6 +290,13 @@ class RecordingResultList(BaseModel):
+     # ローカル改造: 録画結果一覧のレスポンス
+     results: list[RecordingResult]
+ 
++class StorageStatus(BaseModel):
++    # ローカル改造: 録画ストレージの容量情報 (バイト単位)
++    total_bytes: int
++    used_bytes: int
++    free_bytes: int
++    recordings_bytes: int
++
+ # ***** シリーズ *****
+ 
+ class Series(PydanticModel):
+--- a/server/app/utils/StorageStatus.py
++++ b/server/app/utils/StorageStatus.py
+@@ -0,0 +1,74 @@
++import shutil
++import time
++from typing import Any
++
++from app import logging
++from app.models.RecordedVideo import RecordedVideo
++
++
++class StorageStatus:
++    """
++    録画ファイルが置かれているストレージの容量情報を提供するクラス (ローカル改造)
++
++    録画ファイルの保存先は設定ではなく、実際に登録されている録画ファイルのパスから特定する。
++    最新の録画ファイルがあるファイルシステムについて、全体容量・使用量・空き容量を返す。
++    あわせて、録画ファイル自体の合計サイズ (DB に記録された file_size の合計) も返すため、
++    ストレージを他の用途と共有している環境でも「録画が使っている容量」が分かる。
++    取得は比較的低頻度でよい情報のため、短時間キャッシュして DB とディスクへの問い合わせを抑える。
++    """
++
++    # 容量情報のキャッシュ
++    ## fetch() で取得・更新される
++    _cache: dict[str, Any] | None = None
++
++    # 容量情報キャッシュの最終取得時刻 (UNIX タイムスタンプ、秒単位)
++    ## fetch() でキャッシュの鮮度判定に使われる
++    _cache_at: float = 0
++
++    # キャッシュの有効期間 (秒)
++    ## 容量は秒単位で大きく変わらないため、この間は再取得しない
++    CACHE_TTL_SECONDS: float = 60.0
++
++
++    @classmethod
++    async def fetch(cls) -> dict[str, Any] | None:
++        """
++        録画ストレージの容量情報を取得する (短時間キャッシュ付き)
++
++        Returns:
++            dict[str, Any] | None: 容量情報を表す辞書。録画ファイルが 1 件も登録されていない場合や
++            取得に失敗した場合は None を返す。
++            辞書の内容は以下の通り。
++            - total_bytes (int): ストレージの全体容量 (バイト)
++            - used_bytes (int): ストレージの使用量 (バイト)
++            - free_bytes (int): ストレージの空き容量 (バイト)
++            - recordings_bytes (int): 録画ファイル自体の合計サイズ (バイト)
++        """
++
++        # キャッシュが有効期間内ならそのまま返す
++        now = time.monotonic()
++        if cls._cache is not None and (now - cls._cache_at) < cls.CACHE_TTL_SECONDS:
++            return cls._cache
++
++        try:
++            # 最新の録画ファイルのパスから、保存先のファイルシステムを特定する
++            latest_video = await RecordedVideo.all().order_by('-id').first()
++            if latest_video is None:
++                return None
++            usage = shutil.disk_usage(latest_video.file_path)
++
++            # 録画ファイル自体の合計サイズ (DB に記録されたファイルサイズの合計)
++            file_sizes = await RecordedVideo.all().values_list('file_size', flat=True)
++            recordings_bytes = sum(file_sizes)
++
++            cls._cache = {
++                'total_bytes': usage.total,
++                'used_bytes': usage.used,
++                'free_bytes': usage.free,
++                'recordings_bytes': recordings_bytes,
++            }
++            cls._cache_at = now
++            return cls._cache
++        except Exception as ex:
++            logging.error('[StorageStatus] Failed to get storage status:', exc_info=ex)
++            return None

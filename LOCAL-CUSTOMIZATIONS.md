@@ -533,3 +533,12 @@ KonomiTV 本体のパッチではなく、横に置く連携ツール。上の�
 - ラッパーアプリ「KonomiTV」(jp.tatsuya0902.konomitv.tv) を v1.5 に上げて独立リポジトリで公開：https://github.com/tatsuya0902/konomitv-tv-app (MIT)
 - v1.5 の変更：開く URL を起動 Intent の extra (url) で変更可能にし、SharedPreferences に保存して以後も使うようにした（既定は従来どおり作者宅の KonomiTV）。UA の印は KonomiTV-TV/1.5 に更新（クライアント側の判定は部分一致なので影響なし）
 - テレビ (Bravia) へ v1.5 をインストールし、起動して前面表示になることを確認済み
+
+## 2026-11-15 追加分（録画容量の表示）
+
+### 録画容量の表示（storage-display に収録）
+
+- ユーザー要望（2026-11-15）：現在の録画が使っている容量を見られる場所がほしい
+- サーバー：新設 utils/StorageStatus.py が最新の録画ファイルのパスから保存先ファイルシステムを特定し、全体・使用・空き容量と、録画ファイルの合計サイズ（DB の file_size 合計）を返す（60秒キャッシュ）。VideosRouter に GET /api/videos/storage-status（schemas.StorageStatus）を追加
+- クライアント：services/Videos.ts に IStorageStatus と getStorageStatus() を追加。「ビデオをみる」トップ (views/Videos/Home.vue) の録画結果ボタンの横に「録画 XX GB / X.X TB（空き X.X TB）」を表示し、30秒の自動更新に合わせて再取得する。取得できない場合は表示しない
+- 検証（2026-11-15）：本番で単体実行し recordings 61.5GB / 全体 7.2TB / 空き 7.1TB を確認。再起動後に API の応答と、録画中だった番組への影響がないことを確認。パッチチェーン検証（素の v0.14.1 + 8バンドル = 本番ツリー）も一致
