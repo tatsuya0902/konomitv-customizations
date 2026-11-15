@@ -516,3 +516,14 @@ KonomiTV 本体のパッチではなく、横に置く連携ツール。上の�
 - 仕組み：録画を1回デコードして場面の切れ目・無音・局ロゴ枠を取り、局ロゴは録画から自動学習（チャンネル×解像度ごとに型を保存）。判定は動的計画法（CMは15秒の倍数、CM中はロゴが消える等）。結果を録画の横に `.chapter.txt`（AviUtl形式）で書き、CMSectionsDetector を呼んで `cm_sections` に取り込ませる
 - 運用：AKAGI で systemd ユーザータイマー（cm-detect.timer、15分ごと）が未処理の録画をバッチ処理。NHK のチャンネルは対象外
 - 検証（2026-11-15）：ABC「相棒」でロゴ学習に成功し CM 6区間を検出、KonomiTV の API で cm_sections を確認。読売テレビは番組中にロゴを出さないため学習できず、無音と尺のみの判定に落ちる（既知の限界）
+
+## 2026-11-15 追加分（ライブ視聴のチューナー連動）
+
+### ライブ視聴のチューナー連動（live-tuner-gating に収録）
+
+- ユーザー要望（2026-11-15）：空きチューナーがない場合はライブ視聴不可にしたい。ただし録画中と同じ番組（チャンネル）は視聴可
+- サーバー：新設 utils/TunerStatus.py が Mirakurun の /api/tuners と /api/services を取得（5秒キャッシュ）。空き台数と受信中の (type, channel) の集合、(NID, SID) → (type, channel) の対応表を作り、ChannelsRouter の一覧 API が各チャンネルに is_tuner_viewable を付ける（schemas.LiveChannel に追加、既定 True）
+- 判定：空きチューナーあり → 全て可。空きなし → 受信中の物理チャンネルと同じチャンネルのみ可（Mirakurun のチューナー共有仕様に合わせた）。取得失敗・EDCB バックエンドでは全て可（fail-open）
+- 注意：この環境の config は backend='EDCB' + always_receive_tv_from_mirakurun=true のため、実効バックエンドの判定は LiveEncodingTask と同じ条件式に合わせた（backend だけ見ると永遠に無効になる）
+- クライアント：services/Channels.ts の ILiveChannel に is_tuner_viewable を追加。テレビをみる (views/TV/Home.vue) と視聴画面パネル (components/Watch/Panel/Channel.vue) のチャンネル一覧で、視聴不可のチャンネルを opacity 0.55 + grayscale でグレー表示にし「チューナー使用中のため視聴できません」の表示を追加。クリック時は遷移を止めて Message.warning で理由を出す
+- 検証（2026-11-15）：本番 Mirakurun に対し録画2本で全チューナー使用中に TunerStatus を単体実行し、free=0・受信中 GR16/GR17・他チャンネル不可の判定を確認。パッチチェーン検証（素の v0.14.1 + 7バンドル = 本番ツリー）も一致

@@ -1,0 +1,349 @@
+--- a/client/src/components/Watch/Panel/Channel.vue
++++ b/client/src/components/Watch/Panel/Channel.vue
+@@ -21,6 +21,8 @@
+                 <SwiperSlide v-for="[channels_type, channels] in Array.from(channelsStore.channels_list_with_pinned_for_watch)" :key="channels_type">
+                     <div class="channels">
+                         <router-link v-ripple class="channel" draggable="false"
++                            :class="{'channel--tuner-unavailable': channel.is_tuner_viewable === false}"
++                            @click="onChannelClick($event, channel)"
+                             v-for="channel in channels" :key="channel.id" :to="`/tv/watch/${channel.display_channel_id}`">
+                             <!-- 以下では Icon コンポーネントを使うとチャンネルが多いときに高負荷になるため、意図的に SVG を直書きしている -->
+                             <div class="channel__broadcaster">
+@@ -37,6 +39,9 @@
+                                     </div>
+                                 </div>
+                             </div>
++                            <div class="channel__tuner-unavailable" v-if="channel.is_tuner_viewable === false">
++                                チューナー使用中のため視聴できません
++                            </div>
+                             <div class="channel__program-present">
+                                 <span class="channel__program-present-title"
+                                     v-html="ProgramUtils.decorateProgramInfo(channel.program_present, 'title')">
+@@ -74,6 +79,8 @@ import { Swiper, SwiperSlide } from 'swiper/vue';
+ import 'swiper/css';
+ import { defineComponent } from 'vue';
+ 
++import Message from '@/message';
++import { ILiveChannel } from '@/services/Channels';
+ import useChannelsStore from '@/stores/ChannelsStore';
+ import usePlayerStore from '@/stores/PlayerStore';
+ import Utils, { ChannelUtils, ProgramUtils } from '@/utils';
+@@ -102,6 +109,19 @@ export default defineComponent({
+     computed: {
+         ...mapStores(useChannelsStore, usePlayerStore),
+     },
++    methods: {
++
++        // チャンネルがクリックされたとき
++        onChannelClick(event: Event, channel: ILiveChannel) {
++
++            // チューナーに空きがなく受信中でもないチャンネルはライブ視聴できないため、視聴画面への遷移を止めて理由を表示する
++            // 録画中のチャンネル (受信中の物理チャンネル) はチューナーを共有して視聴できるため、そのまま遷移させる
++            if (channel.is_tuner_viewable === false) {
++                event.preventDefault();
++                Message.warning('チューナーに空きがないため、このチャンネルは視聴できません。録画中のチャンネルは視聴できます。');
++            }
++        },
++    },
+     watch: {
+         active_tab_index() {
+             // content-visibility: auto の指定の関係でうまく計算されないことがある Swiper の autoHeight を強制的に再計算する
+@@ -340,6 +360,19 @@ export default defineComponent({
+                         }
+                     }
+ 
++                    // チューナーに空きがなく視聴できないチャンネルは薄くグレー表示にする
++                    &.channel--tuner-unavailable {
++                        opacity: 0.55;
++                        filter: grayscale(0.7);
++                    }
++
++                    .channel__tuner-unavailable {
++                        margin-top: 8px;
++                        font-size: 11px;
++                        font-weight: bold;
++                        color: rgb(var(--v-theme-warning));
++                    }
++
+                     .channel__broadcaster {
+                         display: flex;
+                         height: 28px;
+--- a/client/src/services/Channels.ts
++++ b/client/src/services/Channels.ts
+@@ -50,6 +50,9 @@ export interface ILiveChannel extends IChannel {
+     viewer_count: number;
+     program_present: IProgram | null;
+     program_following: IProgram | null;
++    // チューナーに空きがあるか、既に受信中のチャンネルなのでライブ視聴可能かどうか
++    // チューナー使用状況を取得できない環境では常に true になる
++    is_tuner_viewable: boolean;
+ }
+ 
+ /** 現在放送中のチャンネル情報を表すインターフェイスのデフォルト値 */
+@@ -72,6 +75,7 @@ export const ILiveChannelDefault: ILiveChannel = {
+     viewer_count: 0,
+     program_present: IProgramDefault,
+     program_following: IProgramDefault,
++    is_tuner_viewable: true,
+ };
+ 
+ /** すべてのチャンネルタイプの現在放送中のチャンネルの情報を表すインターフェイス */
+--- a/client/src/views/TV/Home.vue
++++ b/client/src/views/TV/Home.vue
+@@ -26,6 +26,8 @@
+                     <SwiperSlide v-for="[channels_type, channels] in Array.from(channelsStore.channels_list_with_pinned)" :key="channels_type">
+                         <div class="channels" :class="`channels--tab-${channels_type} channels--length-${channels.length}`">
+                             <router-link v-ripple class="channel" draggable="false"
++                                :class="{'channel--tuner-unavailable': channel.is_tuner_viewable === false}"
++                                @click="onChannelClick($event, channel)"
+                                 v-for="channel in channels" :key="channel.id" :to="`/tv/watch/${channel.display_channel_id}`">
+                                 <!-- 以下では Icon コンポーネントを使うとチャンネルが多いときに高負荷になるため、意図的に SVG を直書きしている -->
+                                 <div class="channel__broadcaster">
+@@ -62,6 +64,9 @@
+                                         </svg>
+                                     </div>
+                                 </div>
++                                <div class="channel__tuner-unavailable" v-if="channel.is_tuner_viewable === false">
++                                    チューナー使用中のため視聴できません
++                                </div>
+                                 <div class="channel__program-present">
+                                     <div class="channel__program-present-title-wrapper">
+                                         <span class="channel__program-present-title"
+@@ -273,6 +278,17 @@ export default defineComponent({
+         // チャンネルがピン留めされているか
+         isPinnedChannel(channel: ILiveChannel): boolean {
+             return this.settingsStore.settings.pinned_channel_ids.includes(channel.id);
++        },
++
++        // チャンネルがクリックされたとき
++        onChannelClick(event: Event, channel: ILiveChannel) {
++
++            // チューナーに空きがなく受信中でもないチャンネルはライブ視聴できないため、視聴画面への遷移を止めて理由を表示する
++            // 録画中のチャンネル (受信中の物理チャンネル) はチューナーを共有して視聴できるため、そのまま遷移させる
++            if (channel.is_tuner_viewable === false) {
++                event.preventDefault();
++                Message.warning('チューナーに空きがないため、このチャンネルは視聴できません。録画中のチャンネルは視聴できます。');
++            }
+         }
+     }
+ });
+@@ -574,6 +590,19 @@ export default defineComponent({
+                     }
+                 }
+ 
++                // チューナーに空きがなく視聴できないチャンネルは薄くグレー表示にする
++                &.channel--tuner-unavailable {
++                    opacity: 0.55;
++                    filter: grayscale(0.7);
++                }
++
++                .channel__tuner-unavailable {
++                    margin-top: 10px;
++                    font-size: 12px;
++                    font-weight: bold;
++                    color: rgb(var(--v-theme-warning));
++                }
++
+                 .channel__broadcaster {
+                     display: flex;
+                     height: 44px;
+--- a/server/app/routers/ChannelsRouter.py
++++ b/server/app/routers/ChannelsRouter.py
+@@ -19,6 +19,7 @@ from app.models.Channel import Channel
+ from app.routers.UsersRouter import GetCurrentUser
+ from app.streams.LiveStream import LiveStream
+ from app.utils import GetMirakurunAPIEndpointURL, ParseDatetimeStringToJST
++from app.utils.TunerStatus import TunerStatus
+ from app.utils.edcb.CtrlCmdUtil import CtrlCmdUtil
+ from app.utils.edcb.EDCBUtil import EDCBUtil
+ from app.utils.JikkyoClient import JikkyoClient
+@@ -117,6 +118,11 @@ async def ChannelsAPI():
+     # 並行して実行
+     channels, pf_programs = await asyncio.gather(*tasks)
+ 
++    # Mirakurun のチューナー使用状況を取得する
++    ## 空きチューナーがなく受信中でもないチャンネルはライブ視聴できないため、チャンネルごとに視聴可否を判定するのに使う
++    ## 取得できない場合 (EDCB バックエンドや Mirakurun に接続できない場合) は None になり、全チャンネル視聴可として扱われる
++    tuner_status = await TunerStatus.fetch()
++
+     # レスポンスの雛形
+     result = {
+         'GR': [],
+@@ -146,6 +152,8 @@ async def ChannelsAPI():
+             'is_subchannel': channel.is_subchannel,
+             'is_radiochannel': channel.is_radiochannel,
+             'is_watchable': True,
++            # チューナーに空きがあるか、既に受信中のチャンネルなのでライブ視聴可能かどうか
++            'is_tuner_viewable': TunerStatus.isViewable(tuner_status, channel.network_id, channel.service_id),
+             # 地デジチャンネルの地域名のリスト (デバッグ用)
+             # 広域放送局の場合は複数の地域名が含まれる
+             # 地デジ以外のチャンネルまたは地域が特定できない場合は None
+--- a/server/app/schemas.py
++++ b/server/app/schemas.py
+@@ -51,6 +51,9 @@ class LiveChannel(Channel):
+     viewer_count: int
+     program_present: Program | None
+     program_following: Program | None
++    # チューナーに空きがあるか、既に受信中のチャンネル (物理チャンネル単位) なのでライブ視聴可能かどうか
++    ## チューナー使用状況を取得できない環境 (EDCB バックエンドなど) では常に True になる
++    is_tuner_viewable: bool = True
+ 
+ class LiveChannels(BaseModel):
+     GR: list[LiveChannel]
+--- a/server/app/utils/TunerStatus.py
++++ b/server/app/utils/TunerStatus.py
+@@ -0,0 +1,154 @@
++import time
++from typing import Any
++
++import httpx
++
++from app import logging
++from app.config import Config
++from app.constants import HTTPX_CLIENT
++from app.utils import GetMirakurunAPIEndpointURL
++
++
++class TunerStatus:
++    """
++    Mirakurun のチューナー使用状況をもとに、各チャンネルがライブ視聴可能かどうかを判定するクラス
++
++    Mirakurun では、チューナーが受信中のチャンネル (放送波の物理チャンネル) と同じチャンネルの
++    ストリームは、チューナーに空きがなくても追加で視聴できる (1 台のチューナーを共有できる)。
++    逆に、空きチューナーがなく受信中でもないチャンネルは、ストリームを開始しても
++    Mirakurun 側でエラーになり視聴できない。
++    このクラスは Mirakurun の /api/tuners と /api/services から現在の使用状況を取得し、
++    チャンネルごとの視聴可否を判定するための情報を提供する。
++    """
++
++    # チューナー使用状況のキャッシュ
++    ## チャンネル一覧 API は呼ばれる頻度が高いため、短時間に何度も Mirakurun API を叩かないよう保持する
++    ## fetch() で取得・更新され、isViewable() から参照される
++    _cache: dict[str, Any] | None = None
++
++    # チューナー使用状況キャッシュの最終取得時刻 (UNIX タイムスタンプ、秒単位)
++    ## fetch() でキャッシュの鮮度判定に使われる
++    _cache_at: float = 0
++
++    # キャッシュの有効期間 (秒)
++    ## 録画開始・終了の反映が数秒遅れても実用上問題ないため、この間は再取得しない
++    CACHE_TTL_SECONDS: float = 5.0
++
++
++    @classmethod
++    async def fetch(cls) -> dict[str, Any] | None:
++        """
++        Mirakurun からチューナー使用状況を取得する (短時間キャッシュ付き)
++
++        Returns:
++            dict[str, Any] | None: チューナー使用状況を表す辞書。
++            Mirakurun バックエンドでない場合や取得に失敗した場合は None を返す (None の場合は全チャンネル視聴可として扱う)。
++            辞書の内容は以下の通り。
++            - free_tuners (int): 空きチューナーの台数
++            - tuned_channels (set[tuple[str, str]]): 受信中の (チャンネルタイプ, Mirakurun チャンネル) の集合
++            - service_channels (dict[tuple[int, int], tuple[str, str]]): (ネットワーク ID, サービス ID) から
++              (チャンネルタイプ, Mirakurun チャンネル) への対応表
++        """
++
++        # 実際に Mirakurun から受信する構成でない場合はチューナー状況を判定できないため、None を返す
++        ## バックエンドが EDCB でも always_receive_tv_from_mirakurun が有効なら Mirakurun から受信する
++        ## (LiveEncodingTask でのバックエンド判定と同じ条件)
++        backend = 'Mirakurun' if Config().general.always_receive_tv_from_mirakurun is True else Config().general.backend
++        if backend != 'Mirakurun':
++            return None
++
++        # キャッシュが新鮮な場合はそのまま返す
++        if cls._cache is not None and (time.time() - cls._cache_at) < cls.CACHE_TTL_SECONDS:
++            return cls._cache
++
++        # Mirakurun のサービス一覧とチューナー使用状況を取得する
++        try:
++            async with HTTPX_CLIENT() as client:
++                services_response = await client.get(GetMirakurunAPIEndpointURL('/api/services'), timeout=5)
++                tuners_response = await client.get(GetMirakurunAPIEndpointURL('/api/tuners'), timeout=5)
++            if services_response.status_code != 200 or tuners_response.status_code != 200:
++                logging.warning('[TunerStatus] Failed to fetch tuner status from Mirakurun. '
++                                f'(services: HTTP {services_response.status_code}, tuners: HTTP {tuners_response.status_code})')
++                return None
++            services = services_response.json()
++            tuners = tuners_response.json()
++        except (httpx.NetworkError, httpx.TimeoutException, ValueError) as ex:
++            # Mirakurun に接続できない場合は視聴可否を判定できないため、None を返す (全チャンネル視聴可として扱う)
++            logging.warning(f'[TunerStatus] Failed to fetch tuner status from Mirakurun. ({type(ex).__name__})')
++            return None
++
++        # (ネットワーク ID, サービス ID) から、そのサービスが属する Mirakurun チャンネルへの対応表を作成する
++        ## KonomiTV のチャンネル情報には Mirakurun のチャンネル文字列 (例: GR の物理チャンネルや BS のスロット) が
++        ## 含まれていないため、Mirakurun のサービス一覧から対応を引く必要がある
++        service_channels: dict[tuple[int, int], tuple[str, str]] = {}
++        for service in services:
++            channel = service.get('channel') or {}
++            if channel.get('type') is not None and channel.get('channel') is not None:
++                service_channels[(service['networkId'], service['serviceId'])] = (channel['type'], channel['channel'])
++
++        # 空きチューナーの台数と、受信中のチャンネルの集合を求める
++        free_tuners = 0
++        tuned_channels: set[tuple[str, str]] = set()
++        for tuner in tuners:
++            users = tuner.get('users') or []
++
++            # ユーザーがいないチューナーは空きチューナーとして数える
++            if len(users) == 0:
++                free_tuners += 1
++                continue
++
++            # 各ユーザーが受信中のチャンネルを集合に追加する
++            for user in users:
++                stream_setting = user.get('streamSetting') or {}
++                channel = stream_setting.get('channel') or {}
++
++                # ストリーム設定にチャンネルが直接含まれている場合はそれを使う
++                if channel.get('type') is not None and channel.get('channel') is not None:
++                    tuned_channels.add((channel['type'], channel['channel']))
++                    continue
++
++                # 含まれていない場合はサービス ID から対応を引く
++                service_channel = service_channels.get((stream_setting.get('networkId'), stream_setting.get('serviceId')))
++                if service_channel is not None:
++                    tuned_channels.add(service_channel)
++
++        # 取得結果をキャッシュして返す
++        cls._cache = {
++            'free_tuners': free_tuners,
++            'tuned_channels': tuned_channels,
++            'service_channels': service_channels,
++        }
++        cls._cache_at = time.time()
++        return cls._cache
++
++
++    @classmethod
++    def isViewable(cls, tuner_status: dict[str, Any] | None, network_id: int, service_id: int) -> bool:
++        """
++        指定されたチャンネルがライブ視聴可能かどうかを判定する
++
++        Args:
++            tuner_status (dict[str, Any] | None): fetch() で取得したチューナー使用状況 (None の場合は常に視聴可)
++            network_id (int): チャンネルのネットワーク ID
++            service_id (int): チャンネルのサービス ID
++
++        Returns:
++            bool: 空きチューナーがある、または既に受信中のチャンネルなら True、そうでなければ False
++        """
++
++        # チューナー使用状況が取得できていない場合は、視聴を妨げないよう視聴可として扱う
++        if tuner_status is None:
++            return True
++
++        # 空きチューナーがあればどのチャンネルでも視聴できる
++        if tuner_status['free_tuners'] > 0:
++            return True
++
++        # 空きがない場合でも、既に受信中のチャンネル (物理チャンネル単位) であればチューナーを共有して視聴できる
++        service_channel = tuner_status['service_channels'].get((network_id, service_id))
++
++        # Mirakurun チャンネルへの対応が取れないチャンネルは判定できないため、視聴可として扱う
++        if service_channel is None:
++            return True
++
++        return service_channel in tuner_status['tuned_channels']
