@@ -527,3 +527,9 @@ KonomiTV 本体のパッチではなく、横に置く連携ツール。上の�
 - 注意：この環境の config は backend='EDCB' + always_receive_tv_from_mirakurun=true のため、実効バックエンドの判定は LiveEncodingTask と同じ条件式に合わせた（backend だけ見ると永遠に無効になる）
 - クライアント：services/Channels.ts の ILiveChannel に is_tuner_viewable を追加。テレビをみる (views/TV/Home.vue) と視聴画面パネル (components/Watch/Panel/Channel.vue) のチャンネル一覧で、視聴不可のチャンネルを opacity 0.55 + grayscale でグレー表示にし「チューナー使用中のため視聴できません」の表示を追加。クリック時は遷移を止めて Message.warning で理由を出す
 - 検証（2026-11-15）：本番 Mirakurun に対し録画2本で全チューナー使用中に TunerStatus を単体実行し、free=0・受信中 GR16/GR17・他チャンネル不可の判定を確認。パッチチェーン検証（素の v0.14.1 + 7バンドル = 本番ツリー）も一致
+
+## 2026-11-15 追加分（テレビ用ラッパーアプリの公開）
+
+- ラッパーアプリ「KonomiTV」(jp.tatsuya0902.konomitv.tv) を v1.5 に上げて独立リポジトリで公開：https://github.com/tatsuya0902/konomitv-tv-app (MIT)
+- v1.5 の変更：開く URL を起動 Intent の extra (url) で変更可能にし、SharedPreferences に保存して以後も使うようにした（既定は従来どおり作者宅の KonomiTV）。UA の印は KonomiTV-TV/1.5 に更新（クライアント側の判定は部分一致なので影響なし）
+- テレビ (Bravia) へ v1.5 をインストールし、起動して前面表示になることを確認済み
