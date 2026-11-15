@@ -6,7 +6,7 @@ KonomiTV への改造の一覧は [README](README.md#改造内容) を参照し�
 
 ## EPGStation
 
-単体への改造はありません。KonomiTV 連携の相手先として使用しており、削除・保護の管理元は EPGStation 側に置いています（KonomiTV からは EPGStation の正式 API 経由で委譲）。
+単体への改造はありません。KonomiTV 連携の相手先として使用しており、EPGStation 管理の録画の削除・保護の管理元は EPGStation 側に置いています（KonomiTV からは EPGStation の正式 API 経由で委譲）。EPGStation 管理外の録画は KonomiTV ローカルの保護フラグで保護し、ゴミ箱からの完全削除にもローカル経路があります（[RECORDER-FEATURES.md](RECORDER-FEATURES.md) の「ローカル保護とローカル削除」参照）。
 
 ## Mirakurun と運用ノウハウ
 

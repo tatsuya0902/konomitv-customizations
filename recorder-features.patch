@@ -700,7 +700,17 @@
  watch(() => [props.program.id, useUserStore().user?.id], () => {
      if (useUserStore().user) requestRecordingProtectionBadge(props.program.id);
  }, {immediate: true});
-@@ -306,6 +351,24 @@ const watchHistory = computed(() => {
+@@ -236,7 +281,8 @@ watch(menuOpen, async open => {
+     finally { protectionBusy.value = false; }
+ });
+ const toggleProtection = async () => {
+-    if (protectionBusy.value || protection.value?.epgstation_id == null) return;
++    // ローカル改造: 管理外の録画は epgstation_id が null だが、保護の切替はローカルで行うため続行する。
++    if (protectionBusy.value || protection.value == null) return;
+     protectionBusy.value = true;
+     try {
+         const next = !protection.value.is_protected;
+@@ -306,6 +352,24 @@ const watchHistory = computed(() => {
      return settingsStore.settings.watched_history.find(history => history.video_id === props.program.id);
  });
  
@@ -725,7 +735,7 @@
  // 視聴履歴から削除
  const removeFromWatchedHistory = () => {
      settingsStore.settings.watched_history = settingsStore.settings.watched_history.filter(history => {
-@@ -339,6 +402,17 @@ const deleteVideo = async () => {
+@@ -339,6 +403,17 @@ const deleteVideo = async () => {
      }
  };
  
@@ -743,7 +753,7 @@
  </script>
  <style lang="scss" scoped>
  
-@@ -492,6 +566,25 @@ const deleteVideo = async () => {
+@@ -492,6 +567,25 @@ const deleteVideo = async () => {
          pointer-events: none;
      }
  
@@ -1860,6 +1870,22 @@
  export default ReservationConditions;
 --- a/client/src/services/Videos.ts
 +++ b/client/src/services/Videos.ts
+@@ -4,13 +4,13 @@ import APIClient from  '@/services/APIClient';
+ import { IChannel } from '@/services/Channels';
+ import { CommentUtils } from '@/utils';
+ 
+-/** EPGStation が確認した削除対象。トークンは確認画面の寿命だけ保持する。 */
++/** EPGStation が確認した削除対象。トークンは確認画面の寿命だけ保持する。ローカル削除では epgstation_id が null になる。 */
+ export interface IRecordingDeletePreview {
+     enabled: boolean;
+     confirmation_token: string | null;
+     plan: {
+         video_id: number;
+-        epgstation_id: number;
++        epgstation_id: number | null;
+         title: string;
+         expires_at: number;
+         files: {path: string; size: number;}[];
 @@ -114,6 +114,29 @@ export const IRecordedVideoDefault: IRecordedVideo = {
  };
  
@@ -2000,6 +2026,15 @@
      /**
       * 録画番組のメタデータを再解析する
       * @param video_id 録画番組の ID
+@@ -392,7 +497,7 @@ class Videos {
+         return response.data;
+     }
+ 
+-    static async setProtection(video_id: number, epgstation_id: number, is_protected: boolean): Promise<IRecordingProtection | null> {
++    static async setProtection(video_id: number, epgstation_id: number | null, is_protected: boolean): Promise<IRecordingProtection | null> {
+         const response = await APIClient.put<IRecordingProtection>(`/videos/${video_id}/protection`, {epgstation_id, is_protected});
+         if (response.type === 'error') {
+             APIClient.showGenericError(response, '保護状態の変更を確認できません。メニューを開き直してください。');
 @@ -432,6 +537,36 @@ class Videos {
          }
          return true;
@@ -3665,7 +3700,7 @@
  </style>
 --- a/client/src/views/Videos/Trash.vue
 +++ b/client/src/views/Videos/Trash.vue
-@@ -0,0 +1,283 @@
+@@ -0,0 +1,287 @@
 +<template>
 +    <div class="route-container">
 +        <HeaderBar />
@@ -3717,9 +3752,13 @@
 +            <v-card-title class="d-flex justify-center pt-6 font-weight-bold">本当に完全に削除しますか？</v-card-title>
 +            <v-card-text class="pt-2 pb-0">
 +                <div class="font-weight-bold mb-2">{{ delete_target.program.title }}</div>
-+                <template v-if="delete_preview?.enabled && delete_preview.plan">
++                <template v-if="delete_preview?.enabled && delete_preview.plan && delete_preview.plan.epgstation_id !== null">
 +                    <div class="mb-2">管理元: EPGStation / 録画ID: {{ delete_preview.plan.epgstation_id }}</div>
 +                    <div class="mb-4">録画本体はEPGStationで削除し、KonomiTVとJellyfinの一覧も更新します。</div>
++                </template>
++                <template v-else-if="delete_preview?.enabled && delete_preview.plan">
++                    <div class="mb-2">管理元: なし（KonomiTVローカル管理）</div>
++                    <div class="mb-4">EPGStationの管理外の録画のため、録画本体はKonomiTVが直接削除し、KonomiTVとJellyfinの一覧も更新します。</div>
 +                </template>
 +                <div class="text-error-lighten-1 font-weight-bold">
 +                    ゴミ箱からも消え、元に戻すことはできません。本当に完全に削除しますか？
@@ -3996,15 +4035,15 @@
 +from fastapi import APIRouter, Depends, HTTPException, Query, status
  from pydantic import BaseModel
  
-+from app import schemas
++from app import logging, schemas
  from app.models.RecordedProgram import RecordedProgram
  from app.models.User import User
  from app.routers.UsersRouter import GetCurrentAdminUser, GetCurrentUser
-+from app.utils import RecordingTrash
++from app.utils import RecordingLocalProtection, RecordingTrash
  from app.utils.RecorderDeleteSync import DeleteSyncJob, GetRecorderDeleteSync
  
  
-@@ -115,3 +117,63 @@ async def StopRecorderDeleteSyncWorker() -> None:
+@@ -115,3 +117,77 @@ async def StopRecorderDeleteSyncWorker() -> None:
      service = GetRecorderDeleteSync()
      if service:
          await service.client.aclose()
@@ -4059,6 +4098,20 @@
 +        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Recording is still in progress')
 +    if RecordingTrash.isTrashed(video_id):
 +        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Already in trash')
++    # ローカル改造 (2026-11-15): 保護中の録画はゴミ箱に移動できない。EPGStation 保護と
++    # ローカル保護のマージで判定する。保護状態の取得に失敗した場合は、ゴミ箱移動自体は妨げない
++    # (従来はサーバー側チェックがなく、クライアント側の無効化だけが防波堤だったため)。
++    service = GetRecorderDeleteSync()
++    if service is not None:
++        try:
++            protection = await service.protection(video_id, program.recorded_video.file_path)
++        except HTTPException as ex:
++            logging.warning(f'[RecorderRouter][MoveToTrashAPI] Failed to fetch protection state for video_id {video_id}: {ex.detail}')
++            protection = None
++        if protection is not None and protection.is_protected:
++            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Recording is protected')
++    elif RecordingLocalProtection.get(video_id):
++        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Recording is protected')
 +    RecordingTrash.add(video_id)
 +
 +
@@ -4217,7 +4270,24 @@
  @router.get(
      '/{video_id}',
      summary = '録画番組 API',
-@@ -1020,6 +1092,74 @@ async def VideoJikkyoCommentsAPI(
+@@ -888,7 +960,15 @@ async def VideoDeletePreviewAPI(
+         return RecordingDeletePreview(enabled=False)
+     if recorded_program.recorded_video.status == 'Recording':
+         raise HTTPException(409, 'Recording is still in progress')
+-    plan = await service.plan(recorded_program.id, recorded_program.recorded_video.file_path)
++    try:
++        plan = await service.plan(recorded_program.id, recorded_program.recorded_video.file_path)
++    except HTTPException as ex:
++        # ローカル改造: EPGStation の管理外の場合は、ローカル削除計画を返す。
++        # 管理下・曖昧な場合や録画中などの他の 409 はそのまま伝播させる。
++        if ex.status_code == 409 and 'unmanaged or has an ambiguous' in str(ex.detail):
++            local_plan = await service.planLocal(recorded_program.id, recorded_program.recorded_video.file_path, recorded_program.title)
++            return RecordingDeletePreview(enabled=True, plan=local_plan, confirmation_token=service.signLocal(local_plan))
++        raise
+     return RecordingDeletePreview(enabled=True, plan=plan, confirmation_token=service.sign(plan))
+ 
+ @router.get(
+@@ -1020,6 +1100,74 @@ async def VideoJikkyoCommentsAPI(
      )
  
  
@@ -4292,9 +4362,17 @@
  @router.post(
      '/{video_id}/reanalyze',
      summary = '録画番組メタデータ再解析 API',
-@@ -1160,6 +1300,10 @@ async def VideoDeleteAPI(
+@@ -1159,7 +1307,18 @@ async def VideoDeleteAPI(
+         token = request.headers.get('X-Recording-Confirmation')
          if not token:
              raise HTTPException(409, 'Open the deletion confirmation dialog before deleting')
++        # ローカル改造: ローカル削除トークン ('local.' で始まる) の場合は EPGStation を呼ばず、
++        # KonomiTVローカルで削除する。deleteLocal() 内で管理外・保護 off・ゴミ箱・スナップショットを再確認する。
++        if token.startswith('local.'):
++            sync_state = await service.deleteLocal(recorded_program.id, recorded_program.recorded_video.file_path, token, recorded_program.title)
++            RecordingTrash.remove(recorded_program.id)
++            Bookmarks.forget(recorded_program.id)
++            return Response(status_code=204, headers={'X-Recording-Sync': sync_state})
          job = await service.delete(recorded_program.id, recorded_program.recorded_video.file_path, token)
 +        # ローカル改造: ゴミ箱経由で削除された場合に備え、ゴミ箱の登録も取り消す
 +        RecordingTrash.remove(recorded_program.id)
@@ -4303,7 +4381,7 @@
          return Response(status_code=204, headers={'X-Recording-Sync': job.state})
      # 録画ファイルの情報を取得
      file_path = anyio.Path(recorded_program.recorded_video.file_path)
-@@ -1268,3 +1412,8 @@ async def VideoDeleteAPI(
+@@ -1268,3 +1427,8 @@ async def VideoDeleteAPI(
              status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
              detail = f'Failed to delete recorded program: {ex!s}',
          )
@@ -4461,6 +4539,92 @@
 +        if video_id in state:
 +            del state[video_id]
 +            _saveState(state)
+--- a/server/app/utils/RecordingLocalProtection.py
++++ b/server/app/utils/RecordingLocalProtection.py
+@@ -0,0 +1,83 @@
++"""EPGStation管理外の録画に対する、KonomiTVローカルの保護状態管理。
++
++ローカル改造 (2026-11-15): EPGStationに管理されていない録画 (BDZ取り込み分など) は
++RecorderDeleteSync.protection() が 409 を返すため、保護・解除ができなかった。
++その場合だけ、EPGStationへ委譲せずこのファイルに保護状態を保存する。
++管理下の録画は従来通り EPGStation が管理元であり、このファイルは使わない。
++
++状態は DATA_DIR/recording-local-protection.json に保存する。
++保存方式は WatchedState.py を踏襲する (threading.Lock、一時ファイルに書いてから置き換える)。
++"""
++
++import json
++import logging
++import threading
++from datetime import datetime, timezone
++
++from app.constants import DATA_DIR
++
++
++STATE_PATH = DATA_DIR / 'recording-local-protection.json'
++
++_lock = threading.Lock()
++
++
++def _loadState() -> dict[int, dict[str, object]]:
++    """ローカル保護状態を読み込む。ファイルがない・壊れている場合は空として扱う。"""
++    try:
++        raw = json.loads(STATE_PATH.read_text(encoding='utf-8'))
++        return {int(video_id): entry for video_id, entry in raw.items()}
++    except FileNotFoundError:
++        return {}
++    except Exception:
++        logging.exception('[RecordingLocalProtection] Failed to load local protection state.')
++        return {}
++
++
++def _saveState(state: dict[int, dict[str, object]]) -> None:
++    """ローカル保護状態を保存する (一時ファイルに書いてから置き換える)。"""
++    tmp_path = STATE_PATH.with_suffix('.json.tmp')
++    tmp_path.write_text(
++        json.dumps({str(video_id): entry for video_id, entry in state.items()}, ensure_ascii=False, indent=2),
++        encoding='utf-8',
++    )
++    tmp_path.replace(STATE_PATH)
++
++
++def get(video_id: int) -> bool | None:
++    """録画のローカル保護状態を返す。未設定の場合は None。"""
++    entry = _loadState().get(video_id)
++    if entry is None:
++        return None
++    value = entry.get('is_protected')
++    return bool(value) if isinstance(value, bool) else None
++
++
++def set(video_id: int, is_protected: bool) -> None:
++    """録画のローカル保護状態を保存する。"""
++    with _lock:
++        state = _loadState()
++        state[video_id] = {
++            'is_protected': bool(is_protected),
++            'updated_at': datetime.now(timezone.utc).isoformat(),
++        }
++        _saveState(state)
++
++
++def remove(video_id: int) -> None:
++    """録画のローカル保護状態を削除する (録画自体の削除に合わせて呼ぶ想定)。"""
++    with _lock:
++        state = _loadState()
++        if video_id in state:
++            del state[video_id]
++            _saveState(state)
++
++
++def all() -> dict[int, bool]:
++    """全録画のローカル保護状態 {video_id: is_protected} を返す。"""
++    result: dict[int, bool] = {}
++    for video_id, entry in _loadState().items():
++        value = entry.get('is_protected')
++        if isinstance(value, bool):
++            result[video_id] = value
++    return result
 --- a/server/app/utils/RecordingResults.py
 +++ b/server/app/utils/RecordingResults.py
 @@ -0,0 +1,202 @@
@@ -4668,13 +4832,15 @@
 +    return _loadState()['results']
 --- a/server/app/utils/RecordingTrash.py
 +++ b/server/app/utils/RecordingTrash.py
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,154 @@
 +"""録画のゴミ箱 (削除の猶予期間) の状態管理と、期限切れ録画の自動削除。
 +
 +ローカル改造 (2026-11-13): 市販レコーダーのゴミ箱相当の安全策として新設。
 +削除操作ではファイルや DB は一切変更せず、ここに登録して一覧・検索から隠すだけにとどめる。
 +復元は登録を取り消すだけ、完全削除は保持期間 (既定 30 日) 経過後に既存の削除経路
 +(EPGStation 委譲) で実行する。状態は DATA_DIR/recording-trash.json に保存する。
++ローカル改造 (2026-11-15): EPGStation管理外の録画は、ローカル保護中は完全削除の対象外とし、
++保護 off の場合は KonomiTVローカルで完全に削除する (RecorderDeleteSync.deleteLocal)。
 +"""
 +
 +import json
@@ -4770,7 +4936,9 @@
 +    """
 +    # 循環 import を避けるため、重い依存は関数内で読み込む
 +    from app.models.RecordedProgram import RecordedProgram
++    from app.utils import RecordingLocalProtection
 +    from app.utils.RecorderDeleteSync import GetRecorderDeleteSync
++    from fastapi import HTTPException
 +
 +    now = datetime.now(timezone.utc)
 +    for video_id, entry in list(_loadState().items()):
@@ -4788,12 +4956,27 @@
 +            remove(video_id)
 +            continue
 +
++        # ローカル改造: ローカル保護中の録画は、期限切れでも完全削除の対象外にする。
++        # 保護解除後に初めて削除対象になるよう、削除予定を 1 日先送りする。
++        if RecordingLocalProtection.get(video_id):
++            logging.info(f'[RecordingTrash] Skipping locally protected trashed video_id {video_id}. Postponed by 1 day.')
++            _postpone(video_id, 1)
++            continue
++
 +        try:
 +            service = GetRecorderDeleteSync()
 +            if service is not None:
-+                plan = await service.plan(video_id, program.recorded_video.file_path)
-+                token = service.sign(plan)
-+                await service.delete(video_id, program.recorded_video.file_path, token)
++                try:
++                    plan = await service.plan(video_id, program.recorded_video.file_path)
++                    token = service.sign(plan)
++                    await service.delete(video_id, program.recorded_video.file_path, token)
++                except HTTPException as ex:
++                    # ローカル改造: EPGStation の管理外 (照合 0 件) の場合に限り、ローカル削除へ進む。
++                    # 曖昧 (2件以上) の場合は deleteLocal() 側で 409 になり、下の except で 1 日先送りになる。
++                    if ex.status_code == 409 and 'unmanaged or has an ambiguous' in str(ex.detail):
++                        await service.deleteLocal(video_id, program.recorded_video.file_path, None, program.title)
++                    else:
++                        raise
 +            else:
 +                # EPGStation 委譲がない構成向けの簡易削除 (DB レコードとファイル本体)
 +                file_path = Path(program.recorded_video.file_path)

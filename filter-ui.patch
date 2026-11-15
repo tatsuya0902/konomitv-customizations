@@ -1,0 +1,371 @@
+--- a/client/src/components/Videos/RecordedProgram.vue
++++ b/client/src/components/Videos/RecordedProgram.vue
+@@ -47,7 +47,7 @@
+                     <div class="recorded-program__content-meta-broadcaster" v-else>
+                         <span class="recorded-program__content-meta-broadcaster-name">チャンネル情報なし</span>
+                     </div>
+-                    <div class="recorded-program__content-meta-time">{{ProgramUtils.getProgramTime(program)}}</div>
++                    <div class="recorded-program__content-meta-time">{{ProgramUtils.getRecordingTimeShort(program)}}</div>
+                 </div>
+                 <div class="recorded-program__content-description"
+                     v-html="ProgramUtils.decorateProgramInfo(program, 'description')"></div>
+--- a/client/src/components/Videos/RecordedProgramList.vue
++++ b/client/src/components/Videos/RecordedProgramList.vue
+@@ -287,6 +287,11 @@ const handleProgramDeleted = (id: number) => {
+         flex-shrink: 0;
+         margin-left: auto;
+ 
++        // §6の幅制限（min-width: 0; max-width: calc(100% - 220px);）は、チップ行の横スクロール
++        // 前提のものだったため、メニュー化（案E）に伴い巻き戻す。戻さないとフィルタボタン＋
++        // 並び替えボタンが 154px の枠に収まらず切れる。共通部品のため、他画面
++        // （Home／Search／Mylist／WatchedHistory）は変更前（§6適用前）と同一のCSSに戻る。
++
+         .recorded-program-list__sort-button {
+             width: 103px;
+             margin-left: 12px;
+--- a/client/src/utils/ProgramUtils.ts
++++ b/client/src/utils/ProgramUtils.ts
+@@ -500,6 +500,29 @@ export class ProgramUtils {
+     }
+ 
+ 
++    /**
++     * 録画期間の文字列表現を秒なしで取得する（一覧表示用）
++     * 録画期間が不明な場合は番組放送時刻（getProgramTime()）を返す
++     * @param recorded_program 録画番組情報
++     * @returns 録画番組の録画開始時刻〜録画終了時刻（秒なし）
++     */
++    static getRecordingTimeShort(recorded_program: IRecordedProgram): string {
++
++        // 録画期間が不明な場合は番組放送時刻を返す
++        if (recorded_program.recorded_video.recording_start_time === null || recorded_program.recorded_video.recording_end_time === null) {
++            return ProgramUtils.getProgramTime(recorded_program);
++        }
++
++        const start_time = dayjs(recorded_program.recorded_video.recording_start_time);
++        const end_time = dayjs(recorded_program.recorded_video.recording_end_time);
++
++        // 分単位の録画時間 (割り切れない場合は小数第2位で四捨五入)
++        const duration = Math.round(recorded_program.recorded_video.duration / 60 * 100) / 100;
++
++        return Utils.apply28HourClock(`${start_time.format('YYYY/MM/DD (dd) HH:mm')} ～ ${end_time.format('HH:mm')} (${duration}分)`);
++    }
++
++
+     /**
+      * 文字列に含まれる英数や記号を半角に置換し、一律な表現に整える
+      * server/app/utils/TSInformation.py の TSInformation.formatString() と同等の処理を行う
+--- a/client/src/views/Videos/Programs.vue
++++ b/client/src/views/Videos/Programs.vue
+@@ -36,13 +36,78 @@
+                              独立した行に置くと、リモコンのフォーカスが届かなくなるため -->
+                         <template #actions>
+                             <div class="list-actions list-actions--in-header">
+-                                <button type="button" class="list-actions__chip" :class="{'list-actions__chip--active': unwatched_only}"
+-                                    @click="toggleUnwatchedOnly">
+-                                    未視聴のみ
+-                                </button>
+-                                <button type="button" class="list-actions__chip" @click="show_highlights = true">
+-                                    今日のハイライト
+-                                </button>
++                                <!-- デスクトップ／テレビ：チップ3つをそのまま並べる（ワンタップ操作・リモコン対応を維持） -->
++                                <div class="list-actions__chips">
++                                    <button type="button" class="list-actions__chip" :class="{'list-actions__chip--active': unwatched_only}"
++                                        @click="toggleUnwatchedOnly">
++                                        未視聴のみ
++                                    </button>
++                                    <button type="button" class="list-actions__chip" :class="{'list-actions__chip--active': protected_only}"
++                                        @click="toggleProtectedOnly">
++                                        保護中のみ
++                                    </button>
++                                    <button type="button" class="list-actions__chip" @click="show_highlights = true">
++                                        今日のハイライト
++                                    </button>
++                                </div>
++                                <!-- スマホ縦：チップを隠し、「フィルタ」ボタン＋小さなメニューに置き換える（案E）。
++                                     並び替えもメニュー末尾の「新しい順」「古い順」に移し、見出し行の並び替えボタンは
++                                     スマホ縦のみ CSS（:deep()、§11）で隠す。デスクトップ／テレビではチップ＋並び替えボタンが残る -->
++                                <div class="list-actions__menu">
++                                    <v-menu v-model="filter_menu_open" location="bottom end" :close-on-content-click="false">
++                                        <template #activator="{ props }">
++                                            <button type="button" class="list-actions__chip list-actions__filter-button"
++                                                :class="{'list-actions__chip--active': has_active_filter}"
++                                                v-bind="props">
++                                                <Icon icon="fluent:filter-20-filled" width="16px" height="16px" />
++                                                <span>フィルタ</span>
++                                                <span v-if="active_filter_count > 0" class="list-actions__filter-badge">{{ active_filter_count }}</span>
++                                            </button>
++                                        </template>
++                                        <v-list density="compact" bg-color="background-lighten-1" class="list-actions__filter-menu">
++                                            <v-list-item @click="toggleUnwatchedOnly">
++                                                <template #prepend>
++                                                    <span class="list-actions__filter-check">
++                                                        <Icon v-if="unwatched_only" icon="fluent:checkmark-16-filled" width="20px" height="20px" />
++                                                    </span>
++                                                </template>
++                                                <v-list-item-title class="ml-3">未視聴のみ</v-list-item-title>
++                                            </v-list-item>
++                                            <v-list-item @click="toggleProtectedOnly">
++                                                <template #prepend>
++                                                    <span class="list-actions__filter-check">
++                                                        <Icon v-if="protected_only" icon="fluent:checkmark-16-filled" width="20px" height="20px" />
++                                                    </span>
++                                                </template>
++                                                <v-list-item-title class="ml-3">保護中のみ</v-list-item-title>
++                                            </v-list-item>
++                                            <v-divider></v-divider>
++                                            <v-list-item @click="openHighlights">
++                                                <template #prepend>
++                                                    <span class="list-actions__filter-check"></span>
++                                                </template>
++                                                <v-list-item-title class="ml-3">今日のハイライト</v-list-item-title>
++                                            </v-list-item>
++                                            <v-divider></v-divider>
++                                            <v-list-item @click="updateSortOrder('desc')">
++                                                <template #prepend>
++                                                    <span class="list-actions__filter-check">
++                                                        <Icon v-if="sort_order === 'desc'" icon="fluent:checkmark-16-filled" width="20px" height="20px" />
++                                                    </span>
++                                                </template>
++                                                <v-list-item-title class="ml-3">新しい順</v-list-item-title>
++                                            </v-list-item>
++                                            <v-list-item @click="updateSortOrder('asc')">
++                                                <template #prepend>
++                                                    <span class="list-actions__filter-check">
++                                                        <Icon v-if="sort_order === 'asc'" icon="fluent:checkmark-16-filled" width="20px" height="20px" />
++                                                    </span>
++                                                </template>
++                                                <v-list-item-title class="ml-3">古い順</v-list-item-title>
++                                            </v-list-item>
++                                        </v-list>
++                                    </v-menu>
++                                </div>
+                             </div>
+                         </template>
+                     </RecordedProgramList>
+@@ -53,7 +118,7 @@
+ </template>
+ <script lang="ts" setup>
+ 
+-import { onMounted, ref, watch } from 'vue';
++import { computed, onMounted, ref, watch } from 'vue';
+ import { useRoute, useRouter } from 'vue-router';
+ 
+ import Breadcrumbs from '@/components/Breadcrumbs.vue';
+@@ -74,10 +139,28 @@ const router = useRouter();
+ // ユーザーストア (ゴミ箱リンクの表示判定に使う)
+ const userStore = useUserStore();
+ 
+-// 未視聴のみ表示するかどうかと、ハイライトダイアログの表示状態
++// 未視聴のみ・保護中のみ表示するかどうかと、ハイライトダイアログの表示状態
+ const unwatched_only = ref(false);
++const protected_only = ref(false);
+ const show_highlights = ref(false);
+ 
++// フィルタメニュー（スマホ縦のみ表示）の開閉状態
++const filter_menu_open = ref(false);
++
++// ONのフィルタの数（フィルタボタンのバッジ表示用。今日のハイライトは持続するフィルタではないため数えない）
++const active_filter_count = computed(() => {
++    return (unwatched_only.value ? 1 : 0) + (protected_only.value ? 1 : 0);
++});
++
++// いずれかのフィルタがONかどうか（フィルタボタンのピンク表示用）
++const has_active_filter = computed(() => active_filter_count.value > 0);
++
++// 今日のハイライトを開く（メニューを閉じてからダイアログを開く）
++const openHighlights = () => {
++    filter_menu_open.value = false;
++    show_highlights.value = true;
++};
++
+ // 録画番組のリスト
+ const programs = ref<IRecordedProgram[]>([]);
+ const total_programs = ref(0);
+@@ -91,8 +174,8 @@ const sort_order = ref<'desc' | 'asc'>('desc');
+ 
+ // 録画番組を取得
+ const fetchPrograms = async () => {
+-    // 未視聴のみ表示中は、フィルタ済みリストを toggleUnwatchedOnly 側で管理するため再取得しない
+-    if (unwatched_only.value) {
++    // 未視聴のみ／保護中のみ表示中は、フィルタ済みリストをトグル側で管理するため再取得しない
++    if (unwatched_only.value || protected_only.value) {
+         is_loading.value = false;
+         return;
+     }
+@@ -110,27 +193,69 @@ const isUnwatched = (program: IRecordedProgram): boolean => {
+     return program.watched_ratio === null || program.watched_ratio < 0.9;
+ };
+ 
++// 保護中かどうか (管理下の保護とローカル保護は一覧APIの同じ is_protected に載る)
++// is_protected は3値 (true / false / null) で、null は「管理外でローカル未設定」「状態不明」「曖昧」を含むため、
++// 厳密に true のものだけを保護中として扱う (null を含めないこと)
++const isProtected = (program: IRecordedProgram): boolean => {
++    return program.is_protected === true;
++};
++
++// 全ページを取得する (絞り込み表示用。未視聴のみ・保護中のみで共通)
++const fetchAllPages = async (): Promise<IRecordedProgram[]> => {
++    const collected: IRecordedProgram[] = [];
++    let page = 1;
++    let total = Number.POSITIVE_INFINITY;
++    while (collected.length < total && page <= 50) {
++        const result = await Videos.fetchVideos(sort_order.value, page);
++        if (!result) {
++            break;
++        }
++        total = result.total;
++        collected.push(...result.recorded_programs);
++        page += 1;
++    }
++    return collected;
++};
++
++// 有効なフィルタ (未視聴のみ・保護中のみ) をすべて適用する。両方ONのときはANDで絞り込む
++const applyFilters = (collected: IRecordedProgram[]): IRecordedProgram[] => {
++    return collected.filter((program) => {
++        if (unwatched_only.value && !isUnwatched(program)) {
++            return false;
++        }
++        if (protected_only.value && !isProtected(program)) {
++            return false;
++        }
++        return true;
++    });
++};
++
++// 絞り込み表示を更新する (いずれかのフィルタがONのときは全ページを取得して絞り込む)
++const refreshFilteredPrograms = async () => {
++    const collected = await fetchAllPages();
++    programs.value = applyFilters(collected);
++    total_programs.value = programs.value.length;
++    current_page.value = 1;
++    is_loading.value = false;
++};
++
+ // 未視聴のみ表示を切り替える (ON のときは全ページを取得して絞り込む)
+ const toggleUnwatchedOnly = async () => {
+     unwatched_only.value = !unwatched_only.value;
+     is_loading.value = true;
+-    if (unwatched_only.value) {
+-        const collected: IRecordedProgram[] = [];
+-        let page = 1;
+-        let total = Number.POSITIVE_INFINITY;
+-        while (collected.length < total && page <= 50) {
+-            const result = await Videos.fetchVideos(sort_order.value, page);
+-            if (!result) {
+-                break;
+-            }
+-            total = result.total;
+-            collected.push(...result.recorded_programs);
+-            page += 1;
+-        }
+-        programs.value = collected.filter(isUnwatched);
+-        total_programs.value = programs.value.length;
+-        current_page.value = 1;
+-        is_loading.value = false;
++    if (unwatched_only.value || protected_only.value) {
++        await refreshFilteredPrograms();
++    } else {
++        await fetchPrograms();
++    }
++};
++
++// 保護中のみ表示を切り替える (ON のときは全ページを取得して絞り込む)
++const toggleProtectedOnly = async () => {
++    protected_only.value = !protected_only.value;
++    is_loading.value = true;
++    if (unwatched_only.value || protected_only.value) {
++        await refreshFilteredPrograms();
+     } else {
+         await fetchPrograms();
+     }
+@@ -251,6 +376,26 @@ onMounted(async () => {
+     &--in-header {
+         margin-bottom: 0px;
+     }
++    // チップ3つ（デスクトップ／テレビで表示）
++    &__chips {
++        display: flex;
++        gap: 8px;
++    }
++    // フィルタメニュー（スマホ縦でのみ表示。デフォルトでは隠す）
++    &__menu {
++        display: none;
++    }
++    @include smartphone-vertical {
++        // スマホ縦ではチップを隠し、フィルタメニューに置き換える（案E）。
++        // デスクトップ／テレビではチップのまま（ワンタップ操作とリモコン対応を維持）。
++        // §6の横スクロール規則（.list-actions の overflow-x 等）はメニュー化に伴い不要になったため巻き戻す。
++        &__chips {
++            display: none;
++        }
++        &__menu {
++            display: block;
++        }
++    }
+     &__chip {
+         padding: 5px 12px;
+         border-radius: 999px;
+@@ -265,6 +410,61 @@ onMounted(async () => {
+             color: #fff;
+         }
+     }
++    // 「フィルタ」ボタン（チップと同じ見た目＋漏斗アイコン＋ON件数バッジ）
++    &__filter-button {
++        display: inline-flex;
++        align-items: center;
++        gap: 6px;
++        white-space: nowrap;
++    }
++    // ONのフィルタ件数バッジ（モックアップ通り。ONのときだけ表示）
++    &__filter-badge {
++        display: inline-flex;
++        align-items: center;
++        justify-content: center;
++        min-width: 18px;
++        height: 18px;
++        padding: 0 5px;
++        border-radius: 999px;
++        background: #fff;
++        color: #e64f97;
++        font-size: 11px;
++        font-weight: 700;
++        line-height: 1;
++    }
++    // メニュー項目のチェックマーク枠（ONのときだけチェックを表示。OFFでも幅を確保して文字位置を揃える）
++    &__filter-check {
++        display: inline-flex;
++        align-items: center;
++        justify-content: center;
++        width: 20px;
++        height: 20px;
++        color: rgb(var(--v-theme-primary));
++    }
++    // 360px幅のときだけフィルタボタンをアイコンオンリーにする（案G・§13）。
++    // smartphone-vertical-short（380px以下・縦向き）の範囲内でのみ適用し、390pxでは文字ボタンのまま。
++    // ボタン幅はバッジなし34px／バッジあり58px（§10の調整案2：パディング 5px 8px）で、
++    // 3桁＋バッジありでもタイトルが全表示される（214＋58＝272 ≤ 328）。バッジは維持する。
++    // ON状態はボタンのピンク色＋バッジで示す（現行の設計通り）。
++    @include smartphone-vertical-short {
++        &__filter-button {
++            padding: 5px 8px;
++            > span:not(.list-actions__filter-badge) {
++                display: none;
++            }
++        }
++    }
++}
++
++// スマホ縦では見出し行の並び替えボタン（共通部品 RecordedProgramList.vue のもの）を隠し、
++// フィルタメニュー末尾の「新しい順」「古い順」に置き換える（§11）。
++// :deep() で共通部品のボタンに届く。メディアクエリに自動追従し（回転・リサイズ対応）、
++// 変更は Programs.vue のみに閉じる。RecordedProgramList.vue 自体の変更は不要。
++// デスクトップ／テレビ（横画面）はスマホ縦の範囲外のため、並び替えボタンが残る。
++@include smartphone-vertical {
++    :deep(.recorded-program-list__sort-button) {
++        display: none;
++    }
+ }
+ 
+ </style>

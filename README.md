@@ -33,6 +33,9 @@
 | テレビ向け D-pad 空間ナビゲーション | リモコンの方向キーで項目間を移動し、決定で開く。再生中の決定キーは再生/一時停止になり、一時停止すると操作モードに入って全画面や設定（画質・速度などパネル内も）も操作できる。テレビ向けラッパーでは全画面ボタンがパネルを隠す全画面表示になる | [報告](ADDITIONAL-FEATURES.md)／[パッチ](tv-support.patch) |
 | テレビ操作の改善（スクロール・フラットな録画一覧） | チャンネル一覧など縦に長い一覧を、スクロールしながら最後まで移動できるよう空間ナビの候補判定を修正。縦移動は同じ列の中だけにし、一覧の最後で左サイドバーへ飛ばないようにした。sticky なタブバーに先頭の項目が半分被る問題も補正し、同じ列では近い順に選ぶ・サイドバーへは現在のページの項目から始めるよう調整。「ビデオをみる」はセクション分けのホームではなく録画番組一覧へ直接遷移し、全件をフラットに表示する | [報告](ADDITIONAL-FEATURES.md)／[パッチ](tv-support.patch) |
 | リモコンのメディアキー（前/次チャプター） | テレビのリモコンの「前」「次」ボタンで、CM区間の境目をチャプター移動できる（MediaSession の previoustrack/nexttrack と MediaTrackNext/Previous キーに対応）。CM区間がない録画では無効で、ラッパーアプリ側は従来の話数移動にフォールバックする | [報告](ADDITIONAL-FEATURES.md)／[パッチ](tv-support.patch) |
+| EPGStation管理外録画のローカル保護とローカル削除 | EPGStation の管理外の録画（BDZ から取り込んだもの等）も、KonomiTV ローカルの保護フラグで保護できる。保護中はゴミ箱移動と自動消去の対象外。ゴミ箱からの完全削除と自動消去にも、管理外の場合のローカル削除経路を追加（削除は確認フロー付き、HMAC トークンで認証） | [報告](RECORDER-FEATURES.md)／[パッチ](base-integration.patch)／[パッチ](recorder-features.patch) |
+| 「保護中のみ」フィルタと実際の録画時間表示 | 録画番組一覧に「保護中のみ」チップを追加（「未視聴のみ」との併用は AND）。一覧の時刻行は番組時間ではなく実際の録画時間（録画開始〜終了、秒なし）を表示し、録画期間がない場合は番組時間にフォールバックする | [報告](RECORDER-FEATURES.md)／[パッチ](filter-ui.patch) |
+| フィルタメニューとアイコンオンリー化 | スマホ縦ではフィルタ類を「フィルタ」メニューに集約（未視聴のみ／保護中のみ／今日のハイライト＋並び替え）。ON 件数バッジ付きで、ON 時はピンク。360px幅ではアイコンオンリーになる。デスクトップ／テレビはチップのまま | [報告](RECORDER-FEATURES.md)／[パッチ](filter-ui.patch) |
 
 改造の経緯や詳細な仕様は [LOCAL-CUSTOMIZATIONS.md](LOCAL-CUSTOMIZATIONS.md) にまとめています。周辺ソフトウェア（EPGStation、Mirakurun、pix-userland）を含めた索引は [CUSTOM-FEATURES.md](CUSTOM-FEATURES.md) を参照してください。
 
@@ -41,7 +44,7 @@
 パッチは KonomiTV v0.14.1 の素のツリーに対して `git apply` で適用できます。全部入れる場合は以下の順序で適用してください（適用順序は検証済み）。
 
 ```bash
-for p in base-integration playback comment-highlights recorder-features refinements tv-support; do
+for p in base-integration playback comment-highlights recorder-features refinements tv-support storage-display live-tuner-gating filter-ui; do
   git apply $p.patch
 done
 ```

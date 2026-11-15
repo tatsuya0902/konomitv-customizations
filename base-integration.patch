@@ -76,7 +76,7 @@
  import useSettingsStore from '@/stores/SettingsStore';
  import useUserStore from '@/stores/UserStore';
  import Utils, { ProgramUtils } from '@/utils';
-@@ -179,6 +204,49 @@
+@@ -179,6 +204,49 @@ const emit = defineEmits<{
  const show_video_info = ref(false);
  // 削除確認ダイアログの表示状態
  const show_delete_confirmation = ref(false);
@@ -126,7 +126,7 @@
  
  // 録画ファイルのダウンロード (location.href を変更し、ダウンロード自体はブラウザに任せる)
  const downloadVideo = () => {
-@@ -247,12 +315,14 @@
+@@ -247,12 +315,14 @@ const removeFromWatchedHistory = () => {
  };
  
  // 録画ファイル削除確認ダイアログを表示
@@ -142,7 +142,7 @@
      show_delete_confirmation.value = true;
  };
  
-@@ -261,7 +331,7 @@
+@@ -261,7 +331,7 @@ const deleteVideo = async () => {
      show_delete_confirmation.value = false;
      Message.info('録画ファイルの削除を開始します。完了までしばらくお待ちください。');
  
@@ -151,7 +151,7 @@
      if (result === true) {
          Message.success('録画ファイルを削除しました。');
          // 親コンポーネントに削除イベントを発行
-@@ -404,6 +474,24 @@
+@@ -404,6 +474,24 @@ const deleteVideo = async () => {
          }
      }
  
@@ -186,7 +186,7 @@
                  'watch-container--document-pip': playerStore.is_document_pip,
                  'watch-container--video': playback_mode === 'Video',
              }">
-@@ -63,6 +64,13 @@
+@@ -63,6 +64,13 @@ export default defineComponent({
          ...mapStores(usePlayerStore, useSettingsStore),
      },
      watch: {
@@ -200,7 +200,7 @@
          // 前回視聴画面を開いた際にパネルが表示されていたかどうかを随時保存する
          'playerStore.is_panel_display': {
              handler() {
-@@ -94,6 +102,8 @@
+@@ -94,6 +102,8 @@ export default defineComponent({
      // 終了前に実行
      beforeUnmount() {
  
@@ -209,7 +209,7 @@
          // PlayerStore に視聴画面を閉じたことを伝える
          this.playerStore.stopWatching();
  
-@@ -107,6 +117,41 @@
+@@ -107,6 +117,41 @@ export default defineComponent({
  </script>
  <style lang="scss">
  
@@ -251,7 +251,7 @@
  // 上書きしたいスタイル
  
  // コントロール表示時
-@@ -466,4 +511,4 @@
+@@ -466,4 +511,4 @@ export default defineComponent({
      }
  }
  
@@ -330,7 +330,7 @@
  /** ソート順序を表す型 */
  export type SortOrder = 'desc' | 'asc';
  
-@@ -107,6 +120,7 @@
+@@ -107,6 +120,7 @@ export interface IRecordedProgram {
      recording_start_margin: number;
      recording_end_margin: number;
      is_partially_recorded: boolean;
@@ -338,7 +338,7 @@
      channel: IChannel | null;
      network_id: number | null;
      service_id: number | null;
-@@ -139,6 +153,7 @@
+@@ -139,6 +153,7 @@ export const IRecordedProgramDefault: IRecordedProgram = {
      recording_start_margin: 0,
      recording_end_margin: 0,
      is_partially_recorded: false,
@@ -346,7 +346,7 @@
      channel: null,
      network_id: null,
      service_id: null,
-@@ -188,6 +203,12 @@
+@@ -188,6 +203,12 @@ export interface IJikkyoComments {
  }
  
  
@@ -359,7 +359,7 @@
  class Videos {
  
      /**
-@@ -357,10 +378,40 @@
+@@ -357,10 +378,40 @@ class Videos {
       * @param video_id 録画番組の ID
       * @returns 削除に成功した場合は true
       */
@@ -402,7 +402,7 @@
  
          // エラー処理
          if (response.type === 'error') {
-@@ -372,6 +423,9 @@
+@@ -372,6 +423,9 @@ class Videos {
              return false;
          }
  
@@ -414,7 +414,7 @@
  }
 --- a/client/src/services/player/PlayerController.ts
 +++ b/client/src/services/player/PlayerController.ts
-@@ -71,6 +71,9 @@
+@@ -71,6 +71,9 @@ class PlayerController {
      // 保持しておかないと disconnect() で ResizeObserver を止められない
      private player_container_resize_observer: ResizeObserver | null = null;
  
@@ -424,7 +424,7 @@
      // setControlDisplayTimer() で利用するタイマー ID
      // 保持しておかないと clearTimeout() でタイマーを止められない
      private player_control_ui_hide_timer_id: number = 0;
-@@ -1576,13 +1579,25 @@
+@@ -1576,13 +1579,25 @@ class PlayerController {
      private setupFullscreenHandler(): void {
          assert(this.player !== null);
          const player_store = usePlayerStore();
@@ -451,7 +451,7 @@
          };
  
          // フルスクリーンをリクエスト
-@@ -1595,45 +1610,67 @@
+@@ -1595,45 +1610,67 @@ class PlayerController {
              }
              // フルスクリーンをリクエスト
              // Safari は webkit のベンダープレフィックスが必要
@@ -538,7 +538,7 @@
      }
  
  
-@@ -2062,6 +2099,8 @@
+@@ -2062,6 +2099,8 @@ class PlayerController {
              return;
          }
          this.destroying = true;
@@ -549,7 +549,7 @@
          // 現在の再生位置を取得するため、プレイヤーの破棄前に実行する必要がある
 --- a/client/src/stores/PlayerStore.ts
 +++ b/client/src/stores/PlayerStore.ts
-@@ -86,6 +86,8 @@
+@@ -86,6 +86,8 @@ const usePlayerStore = defineStore('player', {
  
          // フルスクリーン状態かどうか
          is_fullscreen: false,
@@ -558,7 +558,7 @@
  
          // Document Picture-in-Picture モードかどうか
          is_document_pip: false,
-@@ -214,6 +216,7 @@
+@@ -214,6 +216,7 @@ const usePlayerStore = defineStore('player', {
              this.recorded_program = structuredClone(IRecordedProgramDefault);
              this.is_virtual_keyboard_display = false;
              this.is_fullscreen = false;
@@ -568,7 +568,7 @@
              this.is_panel_display = (() => {
 --- a/server/app/app.py
 +++ b/server/app/app.py
-@@ -31,6 +31,7 @@
+@@ -31,6 +31,7 @@ from app.routers import (
      MaintenanceRouter,
      NiconicoRouter,
      ProgramsRouter,
@@ -576,7 +576,7 @@
      RecordingPresetsRouter,
      ReservationConditionsRouter,
      ReservationsRouter,
-@@ -70,6 +71,7 @@
+@@ -70,6 +71,7 @@ app = FastAPI(
  app.include_router(ChannelsRouter.router)
  app.include_router(ProgramsRouter.router)
  app.include_router(VideosRouter.router)
@@ -586,7 +586,7 @@
  app.include_router(VideoStreamsRouter.router)
 --- a/server/app/metadata/RecordedScanTask.py
 +++ b/server/app/metadata/RecordedScanTask.py
-@@ -1440,6 +1440,12 @@
+@@ -1440,6 +1440,12 @@ class RecordedScanTask:
                      # CASCADE 制約により RecordedVideo も同時に削除される (Channel は親テーブルにあたるため削除されない)
                      await db_recorded_video.recorded_program.delete()
                      logging.info(f'{file_path}: Deleted record for removed file.')
@@ -721,7 +721,7 @@
 +        await service.client.aclose()
 --- a/server/app/routers/VideosRouter.py
 +++ b/server/app/routers/VideosRouter.py
-@@ -32,6 +32,12 @@
+@@ -32,6 +32,12 @@ from app.models.User import User
  from app.routers.UsersRouter import GetCurrentAdminUser
  from app.utils.DriveIOLimiter import DriveIOLimiter
  from app.utils.JikkyoClient import JikkyoClient
@@ -734,7 +734,7 @@
  
  
  # ルーター
-@@ -148,6 +154,39 @@
+@@ -148,6 +154,39 @@ async def ConvertRowToRecordedProgram(row: dict[str, Any]) -> schemas.RecordedPr
      return schemas.RecordedProgram.model_validate(recorded_program_dict)
  
  
@@ -774,7 +774,7 @@
  async def GetRecordedProgram(video_id: Annotated[int, Path(description='録画番組の ID 。')]) -> RecordedProgram:
      """ 録画番組 ID から録画番組情報を取得する """
  
-@@ -481,6 +520,9 @@
+@@ -481,6 +520,9 @@ async def VideosAPI(
              id_to_index = {id: index for index, id in enumerate(target_ids)}
              recorded_programs = sorted(recorded_programs, key=lambda x: id_to_index[x.id])
  
@@ -784,7 +784,7 @@
          return schemas.RecordedPrograms(
              total = total,
              recorded_programs = recorded_programs,
-@@ -663,6 +705,9 @@
+@@ -663,6 +705,9 @@ async def VideosSearchAPI(
          for row in rows[1]:  # rows[0] はカラム情報、rows[1] が実際のデータ
              recorded_programs.append(await ConvertRowToRecordedProgram(row))
  
@@ -794,7 +794,7 @@
          return schemas.RecordedPrograms(
              total = total,
              recorded_programs = recorded_programs,
-@@ -692,6 +737,71 @@
+@@ -692,6 +737,71 @@ async def VideoAPI(
      return recorded_program
  
  
@@ -866,7 +866,7 @@
  @router.get(
      '/{video_id}/download',
      summary = '録画番組ダウンロード API',
-@@ -938,6 +1048,7 @@
+@@ -938,6 +1048,7 @@ async def VideoThumbnailRegenerateAPI(
      status_code = status.HTTP_204_NO_CONTENT,
  )
  async def VideoDeleteAPI(
@@ -874,7 +874,7 @@
      recorded_program: Annotated[RecordedProgram, Depends(GetRecordedProgram)],
      current_user: Annotated[User, Depends(GetCurrentAdminUser)],
  ):
-@@ -951,6 +1062,16 @@
+@@ -951,6 +1062,16 @@ async def VideoDeleteAPI(
      JWT エンコードされたアクセストークンがリクエストの Authorization: Bearer に設定されていて、かつ管理者アカウントでないとアクセスできない。
      """
  
@@ -893,7 +893,7 @@
      file_hash = recorded_program.recorded_video.file_hash
 --- a/server/app/schemas.py
 +++ b/server/app/schemas.py
-@@ -214,6 +214,8 @@
+@@ -214,6 +214,8 @@ class RecordedProgram(PydanticModel):
      recording_start_margin: float = 0.0  # 取得できなかった場合のデフォルト値
      recording_end_margin: float = 0.0  # 取得できなかった場合のデフォルト値
      is_partially_recorded: bool = False
@@ -904,7 +904,7 @@
      service_id: int | None = None  # MPEG-TS 形式かつ SDT の解析に成功した場合のみセット
 --- a/server/app/streams/LiveStream.py
 +++ b/server/app/streams/LiveStream.py
-@@ -50,6 +50,11 @@
+@@ -50,6 +50,11 @@ class LiveStreamClient:
          ## 最終読み取り時刻から 10 秒経過したクライアントは LiveStream.writeStreamData() でタイムアウトと判断され、削除される
          self._stream_data_read_at: float = time.time()
  
@@ -916,7 +916,7 @@
  
      @property
      def stream_data_read_at(self) -> float:
-@@ -57,6 +62,12 @@
+@@ -57,6 +62,12 @@ class LiveStreamClient:
          return self._stream_data_read_at
  
  
@@ -929,7 +929,7 @@
      async def readStreamData(self) -> bytes | None:
          """
          自分自身の Queue からストリームデータを読み取って返す
-@@ -73,14 +84,19 @@
+@@ -73,14 +84,19 @@ class LiveStreamClient:
          if self.client_type != 'mpegts':
              return None
  
@@ -953,7 +953,7 @@
  
  
      def writeStreamData(self, stream_data: bytes | None) -> None:
-@@ -662,7 +678,8 @@
+@@ -662,7 +678,8 @@ class LiveStream:
  
              # 最終読み取り時刻を指定秒数過ぎたクライアントはタイムアウトと判断し、クライアントを削除する
              ## 主にネットワークが切断されたなどの理由で発生する
@@ -965,7 +965,7 @@
                  del client
 --- a/server/app/utils/RecorderDeleteSync.py
 +++ b/server/app/utils/RecorderDeleteSync.py
-@@ -0,0 +1,639 @@
+@@ -0,0 +1,799 @@
 +"""EPGStation を管理元とする、確認済み録画の削除とメタデータ同期。"""
 +
 +from __future__ import annotations
@@ -988,6 +988,7 @@
 +
 +from app import logging
 +from app.constants import BASE_DIR, DATA_DIR
++from app.utils import RecordingLocalProtection
 +
 +
 +class RecorderDeleteConfig(BaseModel):
@@ -1039,6 +1040,21 @@
 +    expires_at: int
 +
 +
++class LocalDeletePlan(BaseModel):
++    """EPGStation管理外の録画だけの削除計画。epgstation_id は常に None。
++
++    RecordingDeletePlan は epgstation_id が int 必須のため流用できない。
++    確認トークンは signLocal()/verifyLocal() が扱い、トークン先頭の 'local.'
++    で EPGStation 経路のトークンと区別する。
++    """
++
++    video_id: int
++    epgstation_id: int | None = None
++    title: str
++    files: list[DeleteFileSnapshot]
++    expires_at: int
++
++
 +class RecordingProtection(BaseModel):
 +    enabled: bool
 +    epgstation_id: int | None = None
@@ -1046,13 +1062,14 @@
 +
 +
 +class RecordingProtectionUpdate(BaseModel):
-+    epgstation_id: int
++    # ローカル保護では epgstation_id は None で送られる。管理下の既存クライアントは int を送り続ける。
++    epgstation_id: int | None = None
 +    is_protected: bool
 +
 +
 +class RecordingDeletePreview(BaseModel):
 +    enabled: bool
-+    plan: RecordingDeletePlan | None = None
++    plan: RecordingDeletePlan | LocalDeletePlan | None = None
 +    confirmation_token: str | None = None
 +
 +
@@ -1229,6 +1246,23 @@
 +            if not page.records:
 +                raise HTTPException(502, 'Incomplete EPGStation recording list')
 +
++    async def _epgMatches(self, target: Path) -> list[EPGRecording]:
++        """対象パスに完全一致する EPGStation 録画の一覧を返す。
++
++        0件が管理外、2件以上が曖昧。呼び出し側で件数を区別するために、
++        plan() の 409 判定とは別に件数そのものを返す。
++        """
++        matches: list[EPGRecording] = []
++        for record in await self.recordings():
++            for video in record.video_files:
++                try:
++                    path = self.canonicalPath(video.filename, require_exists=False)
++                except HTTPException:
++                    continue
++                if path == target:
++                    matches.append(record)
++        return matches
++
 +    async def plan(self, video_id: int, file_path: str, allow_protected: bool = False) -> RecordingDeletePlan:
 +        """正規化パスの完全一致で対象を一意にする。
 +
@@ -1240,15 +1274,7 @@
 +            確認後に署名する削除計画。
 +        """
 +        target = self.localPath(file_path)
-+        matches: list[EPGRecording] = []
-+        for record in await self.recordings():
-+            for video in record.video_files:
-+                try:
-+                    path = self.canonicalPath(video.filename, require_exists=False)
-+                except HTTPException:
-+                    continue
-+                if path == target:
-+                    matches.append(record)
++        matches = await self._epgMatches(target)
 +        if len(matches) != 1:
 +            raise HTTPException(409, 'Recording is unmanaged or has an ambiguous EPGStation mapping')
 +        record = matches[0]
@@ -1298,6 +1324,15 @@
 +                states[video_id] = matches[0].is_protected if len(matches) == 1 else None
 +            except HTTPException:
 +                states[video_id] = None
++        # ローカル改造: EPGStation で対応が不明・曖昧な録画は、ローカル保護値を入れる。
++        # 管理下の録画 (EPGStation の値があるもの) は EPGStation の値を優先する。
++        try:
++            local_states = RecordingLocalProtection.all()
++        except Exception:
++            local_states = {}
++        for video_id, state in states.items():
++            if state is None and video_id in local_states:
++                states[video_id] = local_states[video_id]
 +        return states
 +
 +    async def protection(self, video_id: int, file_path: str) -> RecordingProtection:
@@ -1309,7 +1344,21 @@
 +        Returns:
 +            一意に対応した EPGStation の保護状態。
 +        """
-+        plan = await self.plan(video_id, file_path, allow_protected=True)
++        try:
++            plan = await self.plan(video_id, file_path, allow_protected=True)
++        except HTTPException as ex:
++            # ローカル改造: EPGStation の管理外・曖昧な録画は、ローカル保護へフォールバックする。
++            # 0件 (管理外) と2件以上 (曖昧) は plan() では同じ 409 になるため、件数を数え直してログに残す。
++            if ex.status_code == 409 and 'unmanaged or has an ambiguous' in str(ex.detail):
++                try:
++                    match_count = len(await self._epgMatches(self.localPath(file_path)))
++                except HTTPException:
++                    match_count = -1
++                if match_count > 1:
++                    logging.warning(f'[RecorderDeleteSync] Ambiguous EPGStation mapping for video_id {video_id}; using local protection.')
++                return RecordingProtection(enabled=True, epgstation_id=None,
++                    is_protected=RecordingLocalProtection.get(video_id) or False)
++            raise
 +        response = await self.request('GET', f'/recorded/{plan.epgstation_id}?isHalfWidth=false')
 +        if response.status_code == 404:
 +            raise HTTPException(409, 'Recording no longer exists in EPGStation')
@@ -1333,6 +1382,14 @@
 +        """
 +        async with self.lock:
 +            current = await self.protection(video_id, file_path)
++            # ローカル改造: 管理外 (epgstation_id が None) の場合は EPGStation へ PUT せず、
++            # ローカル保護ストアに保存する。管理下の録画で update が None の場合は mapping 変更として拒否する。
++            if current.epgstation_id is None:
++                if update.epgstation_id is not None:
++                    raise HTTPException(409, 'Recording mapping changed; reopen the menu')
++                RecordingLocalProtection.set(video_id, update.is_protected)
++                return RecordingProtection(enabled=True, epgstation_id=None,
++                    is_protected=RecordingLocalProtection.get(video_id) or False)
 +            if current.epgstation_id != update.epgstation_id:
 +                raise HTTPException(409, 'Recording mapping changed; reopen the menu')
 +            if current.is_protected != update.is_protected:
@@ -1379,6 +1436,109 @@
 +            return plan
 +        except (ValueError, UnicodeError) as ex:
 +            raise HTTPException(409, 'Deletion confirmation expired or changed; open confirmation again') from ex
++
++    async def planLocal(self, video_id: int, file_path: str, title: str) -> LocalDeletePlan:
++        """EPGStation管理外の録画だけの削除計画を作る。
++
++        0件 (完全な管理外) の場合に限る。管理下・曖昧 (2件以上) の場合は 409。
++        ローカル保護中の場合は 409。ファイルは録画1本の単一ファイルに限る。
++        """
++        target = self.localPath(file_path)
++        matches = await self._epgMatches(target)
++        if matches:
++            raise HTTPException(409, 'Recording is managed by EPGStation or has an ambiguous EPGStation mapping')
++        if RecordingLocalProtection.get(video_id):
++            raise HTTPException(409, 'Recording is protected')
++        return LocalDeletePlan(video_id=video_id, epgstation_id=None, title=title,
++            files=[self.snapshot(target)], expires_at=int(time.time()) + 300)
++
++    def signLocal(self, plan: LocalDeletePlan) -> str:
++        """ローカル削除計画を署名付きトークンへ変換する。先頭の 'local.' で EPGStation 経路と区別する。"""
++        payload = base64.urlsafe_b64encode(plan.model_dump_json().encode()).decode()
++        signature = hmac.new(self.key, payload.encode(), hashlib.sha256).hexdigest()
++        return 'local.' + payload + '.' + signature
++
++    def verifyLocal(self, token: str, video_id: int) -> LocalDeletePlan:
++        """ローカル削除トークンの署名・対象 ID・有効期限 (300秒) を検証する。"""
++        try:
++            if not token.startswith('local.'):
++                raise ValueError('Not a local confirmation token')
++            if len(token) > 131072:
++                raise ValueError('Token too large')
++            _, payload, signature = token.split('.', 2)
++            expected = hmac.new(self.key, payload.encode(), hashlib.sha256).hexdigest()
++            if not hmac.compare_digest(signature, expected):
++                raise ValueError('Invalid signature')
++            plan = LocalDeletePlan.model_validate_json(base64.urlsafe_b64decode(payload))
++            if plan.video_id != video_id or plan.epgstation_id is not None or plan.expires_at < time.time():
++                raise ValueError('Expired or mismatched confirmation')
++            return plan
++        except (ValueError, UnicodeError) as ex:
++            raise HTTPException(409, 'Deletion confirmation expired or changed; open confirmation again') from ex
++
++    async def deleteLocal(self, video_id: int, file_path: str, token: str | None, title: str) -> str:
++        """EPGStationを呼ばず、KonomiTVローカルで録画を完全に削除する。
++
++        条件: 完全な管理外 (EPGStation照合0件)、ローカル保護 off、ゴミ箱に入っていること、
++        確認時のスナップショットと一致すること (token がある場合はその確認内容とも一致すること)。
++        DB・サムネイル・補助ファイル・本体を削除し、ゴミ箱・しおり・ローカル保護の登録も片付ける。
++        Jellyfin には queueExternalRefresh() で一覧更新を要求する (EPG経路の reconcile() と同じ仕組み)。
++        token が None の場合はゴミ箱の期限切れ自動削除 (purgeExpired) からの内部呼び出し。
++        戻り値は VideoDeleteAPI の X-Recording-Sync ヘッダに入れる同期状態。
++        """
++        from app.constants import THUMBNAILS_DIR
++        from app.models.RecordedProgram import RecordedProgram
++        from app.utils import Bookmarks, RecordingTrash
++
++        async with self.lock:
++            confirmed = self.verifyLocal(token, video_id) if token is not None else None
++            fresh = await self.planLocal(video_id, file_path, title or (confirmed.title if confirmed else ''))
++            if confirmed is not None and fresh.files != confirmed.files:
++                raise HTTPException(409, 'Recording changed after confirmation')
++            if not RecordingTrash.isTrashed(video_id):
++                raise HTTPException(409, 'Recording must be in trash before local deletion')
++            await asyncio.sleep(0.2)
++            for item in fresh.files:
++                if self.snapshot(self.localPath(item.path)) != item:
++                    raise HTTPException(409, 'Recording file is still changing')
++            program = await RecordedProgram.filter(id=video_id).select_related('recorded_video').first()
++            if program is None:
++                raise HTTPException(409, 'Recording no longer exists')
++            file_hash = program.recorded_video.file_hash
++            duplicate_records = await RecordedProgram.filter(
++                recorded_video__file_hash=file_hash,
++            ).exclude(id=video_id).count()
++            has_duplicates = duplicate_records > 0
++            await program.delete()
++            thumbnails_dir = Path(str(THUMBNAILS_DIR))
++            if thumbnails_dir.is_dir() and not has_duplicates:
++                for ext in ['.webp', '.jpg']:
++                    for suffix in ['', '_tile']:
++                        thumb = thumbnails_dir / f'{file_hash}{suffix}{ext}'
++                        try:
++                            if thumb.is_file():
++                                thumb.unlink()
++                        except Exception:
++                            logging.warning(f'[RecorderDeleteSync] Failed to delete thumbnail file: {thumb}')
++            target = Path(fresh.files[0].path)
++            for aux in [target.with_name(target.name + '.program.txt'), target.with_name(target.name + '.err')]:
++                try:
++                    if aux.is_file():
++                        aux.unlink()
++                except Exception:
++                    logging.warning(f'[RecorderDeleteSync] Failed to delete auxiliary file: {aux}')
++            if target.is_file():
++                target.unlink()
++            else:
++                logging.warning(f'[RecorderDeleteSync] Locally deleted recording file was already missing: {target}')
++            RecordingTrash.remove(video_id)
++            Bookmarks.forget(video_id)
++            RecordingLocalProtection.remove(video_id)
++            try:
++                self.queueExternalRefresh(file_path)
++            except Exception:
++                logging.warning('[RecorderDeleteSync] Failed to queue Jellyfin refresh after local deletion.')
++            return 'Complete'
 +
 +    def saveJob(self, job: DeleteSyncJob) -> None:
 +        """再試行記録を原子的に置き換え、認証情報は保存しない。
