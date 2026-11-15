@@ -1,3 +1,45 @@
+--- a/client/src/components/Videos/RecordedProgram.vue
++++ b/client/src/components/Videos/RecordedProgram.vue
+@@ -27,7 +27,7 @@
+                     メタデータ解析失敗
+                 </div>
+                 <div v-else-if="program.is_partially_recorded" class="recorded-program__thumbnail-status recorded-program__thumbnail-status--partial">
+-                    ⚠️ 一部のみ録画
++                    ⚠️ 録画不完全
+                 </div>
+                 <div v-if="watchHistory" class="recorded-program__thumbnail-progress">
+                     <div class="recorded-program__thumbnail-progress-bar"
+--- a/client/src/components/Videos/RecordingResultsDialog.vue
++++ b/client/src/components/Videos/RecordingResultsDialog.vue
+@@ -38,7 +38,7 @@ import { defineComponent } from 'vue';
+ import { formatPlaybackTime } from '@/services/CommentHighlights';
+ import Videos, { IRecordingResult } from '@/services/Videos';
+ 
+-// ローカル改造: 予約録画の結果 (成功 / 一部のみ / 失敗) を一覧表示するダイアログ
++// ローカル改造: 予約録画の結果 (成功 / 録画不完全 / 失敗) を一覧表示するダイアログ
+ // 結果はサーバー側で EPGStation の予約・録画と照合して記録されている
+ export default defineComponent({
+     name: 'RecordingResultsDialog',
+@@ -66,7 +66,7 @@ export default defineComponent({
+     },
+     methods: {
+         statusLabel(status: IRecordingResult['status']): string {
+-            return { success: '録画できた', partial: '一部のみ', failed: '失敗' }[status];
++            return { success: '録画できた', partial: '録画不完全', failed: '失敗' }[status];
+         },
+         statusIcon(status: IRecordingResult['status']): string {
+             return {
+--- a/client/src/components/Watch/Panel/RecordedProgram.vue
++++ b/client/src/components/Watch/Panel/RecordedProgram.vue
+@@ -32,7 +32,7 @@
+             <div class="mt-5">
+                 <div class="program-info__status">
+                     <Icon icon="ic:round-date-range" height="17px" style="margin-left: -2px; margin-right: -1.7px; margin-bottom: -3px;" />
+-                    <span class="ml-2">録画期間: {{playerStore.recorded_program.is_partially_recorded ? '(一部のみ録画)' : ''}}</span><br>
++                    <span class="ml-2">録画期間: {{playerStore.recorded_program.is_partially_recorded ? '(録画不完全)' : ''}}</span><br>
+                     <span>{{ProgramUtils.getRecordingTime(playerStore.recorded_program)}}</span>
+                 </div>
+                 <div class="program-info__status">
 --- a/server/app/metadata/MetadataAnalyzer.py
 +++ b/server/app/metadata/MetadataAnalyzer.py
 @@ -20,6 +20,13 @@ from app.utils.TSInformation import TSInformation, calculateTSFileDuration

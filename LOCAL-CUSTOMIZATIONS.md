@@ -609,3 +609,4 @@ KonomiTV 本体のパッチではなく、横に置く連携ツール。上の�
 ### パッチチェーン検証（2026-11-16、11バンドル）
 
 素の v0.14.1 に11バンドル（base-integration、playback、comment-highlights、recorder-features、refinements、tv-support、storage-display、live-tuner-gating、filter-ui、mobile-player-controls、partially-recorded-tolerance）を順に適用したツリーが、本番の client/src と server/app の全ファイルと一致することを確認した（全ツリーの diff が空）。
+- 追記（同日）：表示文言も「一部のみ」では分かりにくいというユーザー指摘で「録画不完全」に変更した（録画カードのバッジ、再生画面の録画期間表示、録画結果一覧のステータス表記）。同じバンドルに収録
