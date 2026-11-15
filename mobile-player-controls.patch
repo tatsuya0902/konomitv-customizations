@@ -1,0 +1,34 @@
+--- a/client/src/components/Watch/Player.vue
++++ b/client/src/components/Watch/Player.vue
+@@ -242,6 +242,18 @@ const handleSettingCoverClick = () => {
+                         }
+                     }
+                 }
++                // スマホ縦画面ではコントロールバーのボタンが横幅に収まりきらず、左右のボタン同士が重なってしまう (ローカル改造)
++                // 60秒スキップボタン (SeekControlManager が付与する dplayer-skip-icon-large) を非表示にし、アイコン自体の間隔も詰める
++                // 60秒スキップはシークバーや長押しの高速シークで代替できるため、残る 10秒戻し / 30秒送り (設定秒数) と
++                // チャプターボタン・キャプチャボタン・プレイヤー再起動ボタンの操作を優先する
++                @include smartphone-vertical {
++                    width: 32px !important;
++                    padding-left: 4px !important;
++                    padding-right: 4px !important;
++                    &.dplayer-skip-icon-large {
++                        display: none !important;
++                    }
++                }
+                 &.dplayer-capture-icon, &.dplayer-comment-capture-icon {
+                     transition: background-color 0.08s ease;
+                     border-radius: 6px;
+--- a/client/src/services/player/managers/SeekControlManager.ts
++++ b/client/src/services/player/managers/SeekControlManager.ts
+@@ -97,6 +97,10 @@ class SeekControlManager implements PlayerManager {
+         // 再生ボタンの後に (設定秒数)送り / 60秒送り を挿入
+         const forward_small = this.createSkipButton(forward_seconds, `${forward_seconds}秒送り`);
+         const forward_large = this.createSkipButton(60, '60秒送り');
++        // 60秒スキップボタンには識別用のクラスを付与する
++        // (スマホ縦画面ではコントロールバーにボタンが収まりきらないため、Player.vue 側のスタイルで非表示にできるようにする)
++        back_large.classList.add('dplayer-skip-icon-large');
++        forward_large.classList.add('dplayer-skip-icon-large');
+         play_icon.after(forward_small, forward_large);
+         this.buttons = [back_large, back_small, forward_small, forward_large];
+ 

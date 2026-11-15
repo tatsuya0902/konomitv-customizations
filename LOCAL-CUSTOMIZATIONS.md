@@ -586,3 +586,16 @@ KonomiTV 本体のパッチではなく、横に置く連携ツール。上の�
 ### パッチチェーン検証（2026-11-15）
 
 素の v0.14.1 に9バンドル（base-integration、playback、comment-highlights、recorder-features、refinements、tv-support、storage-display、live-tuner-gating、filter-ui）を順に適用したツリーが、本番の client/src と server/app の全ファイルと一致することを確認した（全ツリーの diff が空）。filter-ui.patch はフィルタUI一式の正味の差分（保護中のみフィルタ、録画時間表示、フィルタメニュー＋並び替え、アイコンオンリー化）で、途中の横スクロール化は含まれない。
+
+## 2026-11-16 追加分（スマホ縦画面のプレイヤーボタン配置）
+
+### スマホ縦画面では ±60秒スキップボタンを隠し、アイコンの間隔を詰める（mobile-player-controls に収録）
+
+- 発端：スマホ縦画面でプレイヤーのコントロールバーのボタン同士が重なるというユーザー指摘。バーは1段組で、右側はキャプチャ×2・実況・設定・PiP・全画面に加えてプレイヤー再起動ボタン、左側は送り戻し4ボタン＋時刻表示＋（CM区間がある録画では）前/次チャプター2ボタンがあり、縦画面の横幅に収まりきらなくなっていた
+- 対応：スマホ縦画面（smartphone-vertical）のときだけ、±60秒スキップボタンを非表示にし、全アイコンの間隔を詰める。残す送り戻しは設定秒数（既定 −10秒／+30秒）で、60秒スキップはシークバーと長押しの高速シークで代替できる。横向き・タブレット・テレビは従来通り4ボタン
+- 実装：SeekControlManager が ±60秒ボタンに識別用クラス dplayer-skip-icon-large を付与し、Player.vue のコントロールバーのスタイルで smartphone-vertical のときだけ display:none にする。あわせてアイコン幅を32px・左右パディングを4pxに詰める
+- 検証（2026-11-16）：vue-tsc 通過、本番へはクライアント再ビルドのみで反映（サーバー再起動なし）。ユーザー本人が iPhone で表示を確認済み
+
+### パッチチェーン検証（2026-11-16）
+
+素の v0.14.1 に10バンドル（base-integration、playback、comment-highlights、recorder-features、refinements、tv-support、storage-display、live-tuner-gating、filter-ui、mobile-player-controls）を順に適用したツリーが、本番の client/src と server/app の全ファイルと一致することを確認した（全ツリーの diff が空）。

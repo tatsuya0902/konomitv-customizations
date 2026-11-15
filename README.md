@@ -10,6 +10,7 @@
 | 疑似フルスクリーン | 字幕・コメントを維持してプレイヤー全体を拡大。回転時のレイアウト追従を含む | [報告](PSEUDO-FULLSCREEN.md)／[パッチ](base-integration.patch)／[レイアウト追従](refinements.patch) |
 | 追いかけ再生 | 録画中の番組を最初から再生可能に（PCR実測で再生可能尺を更新し、EVENTプレイリストで追随）。録画中カードを開けるようにする CSS 修正を含む | [報告](PLAYBACK.md)／[パッチ](playback.patch)／[カード修正](playback.patch) |
 | シークボタン・再生速度コントロール | 再生ボタンの両脇にシークボタン（内側は設定で変更可能な −10/+30 秒、外側は ±60 秒、長押しで高速シーク）、再生速度 0.75〜2 倍を端末に保存 | [報告](PLAYBACK.md)／[パッチ](playback.patch)／[±60 秒化など](recorder-features.patch) |
+| スマホ縦画面でのプレイヤーボタン配置 | スマホ縦画面ではコントロールバーの ±60 秒スキップボタンを隠し、アイコンの間隔を詰めて、チャプターボタン・キャプチャボタン・プレイヤー再起動ボタンなどが重ならないようにする | [パッチ](mobile-player-controls.patch) |
 | 続き再生の巻き戻し | 前回視聴した続きから再生するとき、保存位置より少し手前（既定10秒、設定で0/5/10/15/30秒に変更可）から再開する。端末ローカル設定 | [報告](PLAYBACK.md)／[パッチ](playback.patch) |
 | EPGStation/Jellyfin 連携 | 削除を EPGStation へ委譲（確認フロー付き）、保護状態の表示（ログアウト中も同じバッジ）と付け外し、Jellyfin への削除連動と同期リトライ | [報告](EPGSTATION-INTEGRATION.md)／[パッチ](base-integration.patch) |
 | 前の話・次の話ボタン | 視聴画面から同じシリーズの前後の回へ移動。シリーズ情報がない場合はタイトル（話数表記と括弧注記を除いた番組名）の一致で判定 | [報告](RECORDER-FEATURES.md)／[パッチ](playback.patch) |
@@ -44,7 +45,7 @@
 パッチは KonomiTV v0.14.1 の素のツリーに対して `git apply` で適用できます。全部入れる場合は以下の順序で適用してください（適用順序は検証済み）。
 
 ```bash
-for p in base-integration playback comment-highlights recorder-features refinements tv-support storage-display live-tuner-gating filter-ui; do
+for p in base-integration playback comment-highlights recorder-features refinements tv-support storage-display live-tuner-gating filter-ui mobile-player-controls; do
   git apply $p.patch
 done
 ```
