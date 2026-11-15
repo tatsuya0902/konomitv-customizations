@@ -507,3 +507,12 @@ EPGStation は終了した予約と失敗した録画を DB に残さないた�
 ### 検証（2026-11-15）
 
 素の v0.14.1 に6バンドルを順に適用したツリーが、本番の client/src と server/app の全ファイルと一致することを確認した。シリーズ予約は API の往復テスト（条件作成→EPGStation ルール→予約23件生成→条件削除→ルール・予約の消去）まで実施。
+
+## 2026-11-15 追加分（CM検出エンジン cm-detect、連携ツール）
+
+KonomiTV 本体のパッチではなく、横に置く連携ツール。上の「CM区間の受け口」が読む `.chapter.txt` を自動生成する。
+
+- 公開先：https://github.com/tatsuya0902/cm-detect （AGPL-3.0。denpa https://github.com/danything/denpa の CM 判定コア cm-decide / logo-detect / logo-area を複写しているため）
+- 仕組み：録画を1回デコードして場面の切れ目・無音・局ロゴ枠を取り、局ロゴは録画から自動学習（チャンネル×解像度ごとに型を保存）。判定は動的計画法（CMは15秒の倍数、CM中はロゴが消える等）。結果を録画の横に `.chapter.txt`（AviUtl形式）で書き、CMSectionsDetector を呼んで `cm_sections` に取り込ませる
+- 運用：AKAGI で systemd ユーザータイマー（cm-detect.timer、15分ごと）が未処理の録画をバッチ処理。NHK のチャンネルは対象外
+- 検証（2026-11-15）：ABC「相棒」でロゴ学習に成功し CM 6区間を検出、KonomiTV の API で cm_sections を確認。読売テレビは番組中にロゴを出さないため学習できず、無音と尺のみの判定に落ちる（既知の限界）
