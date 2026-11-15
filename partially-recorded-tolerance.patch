@@ -1,0 +1,28 @@
+--- a/server/app/metadata/MetadataAnalyzer.py
++++ b/server/app/metadata/MetadataAnalyzer.py
+@@ -20,6 +20,13 @@ from app.utils.TSInformation import TSInformation, calculateTSFileDuration
+ from app.utils.TSKeyFrameSeeker import TSKeyFrameSeeker, TSStreamInfo
+ 
+ 
++# 「部分的に録画されている」判定の許容誤差 (秒): ローカル改造
++## EPGStation の録画では開始・終了とも数秒のずれが常態的に生じるため、許容誤差がないと
++## 正常に録画できた番組にも「一部のみ」フラグが付いてしまう
++## 実際に途中から録画した・途中で切れた番組は分単位でずれるため、10 秒の許容でも見逃さない
++PARTIALLY_RECORDED_TOLERANCE_SECONDS = 10
++
++
+ class FFprobeFormat(BaseModel):
+     """FFprobe から返される format セクションの情報"""
+     format_name: str  # 必須 - "mpegts", "mp4" など
+@@ -614,8 +621,9 @@ class MetadataAnalyzer:
+ 
+             # 番組開始時刻 < 録画開始時刻 or 録画終了時刻 < 番組終了時刻 の場合、部分的に録画されていることを示すフラグを立てる
+             ## 番組全編を録画するには、録画開始時刻が番組開始時刻よりも前で、録画終了時刻が番組終了時刻よりも後である必要がある
+-            if (recorded_program.start_time < recorded_video.recording_start_time or
+-                recorded_video.recording_end_time < recorded_program.end_time):
++            ## ただし、録画開始・終了の数秒程度のずれは許容する (PARTIALLY_RECORDED_TOLERANCE_SECONDS を超えたずれだけを部分録画とみなす)
++            if (recorded_program.start_time + timedelta(seconds=PARTIALLY_RECORDED_TOLERANCE_SECONDS) < recorded_video.recording_start_time or
++                recorded_video.recording_end_time < recorded_program.end_time - timedelta(seconds=PARTIALLY_RECORDED_TOLERANCE_SECONDS)):
+                 recorded_program.is_partially_recorded = True
+             else:
+                 recorded_program.is_partially_recorded = False

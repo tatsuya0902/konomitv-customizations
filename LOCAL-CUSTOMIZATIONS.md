@@ -599,3 +599,13 @@ KonomiTV 本体のパッチではなく、横に置く連携ツール。上の�
 ### パッチチェーン検証（2026-11-16）
 
 素の v0.14.1 に10バンドル（base-integration、playback、comment-highlights、recorder-features、refinements、tv-support、storage-display、live-tuner-gating、filter-ui、mobile-player-controls）を順に適用したツリーが、本番の client/src と server/app の全ファイルと一致することを確認した（全ツリーの diff が空）。
+
+### 「一部のみ」判定に10秒の許容誤差を持たせる（partially-recorded-tolerance に収録）
+
+- 発端：最近の録画に軒並み「一部のみ」フラグが付くというユーザー指摘。上流の判定（MetadataAnalyzer）は許容誤差ゼロで、番組開始より後に録画が始まるか番組終了より前に録画が終われば即フラグが立っていた。実測では EPGStation の録画は開始が −5〜+6 秒程度にばらつき、正常な録画でも数秒の遅れでフラグが付いていた
+- 対応：開始・終了とも10秒の許容誤差を入れ、許容を超えたずれだけを部分録画とみなす（定数 PARTIALLY_RECORDED_TOLERANCE_SECONDS）。本物の途中録画・切断は分単位でずれるため見逃さない。フラグは解析時点の値が DB に保存されるため、既存の録画には再解析が必要
+- 検証（2026-11-16）：本番反映（KonomiTV 再起動）後、フラグ付きだった10件を再解析。ポツンと一軒家（開始 +0.88 秒のずれ）のフラグが外れ、残り9件（かのサンドの開始 +1912 秒、珍百景・DASH の末尾切断、音のソノリティの開始 +40 秒、BDZ 取り込みの途中録画など）は本物の部分録画としてフラグが残った
+
+### パッチチェーン検証（2026-11-16、11バンドル）
+
+素の v0.14.1 に11バンドル（base-integration、playback、comment-highlights、recorder-features、refinements、tv-support、storage-display、live-tuner-gating、filter-ui、mobile-player-controls、partially-recorded-tolerance）を順に適用したツリーが、本番の client/src と server/app の全ファイルと一致することを確認した（全ツリーの diff が空）。
