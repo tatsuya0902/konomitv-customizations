@@ -1,3 +1,71 @@
+--- a/client/src/components/Videos/StorageStatusText.vue
++++ b/client/src/components/Videos/StorageStatusText.vue
+@@ -0,0 +1,65 @@
++<template>
++    <div v-if="storage_status" class="storage-status-text">
++        <Icon icon="fluent:database-20-regular" width="16px" height="16px" />
++        <span>録画 {{ formatBytes(storage_status.recordings_bytes) }} / {{ formatBytes(storage_status.total_bytes) }}（空き {{ formatBytes(storage_status.free_bytes) }}）</span>
++    </div>
++</template>
++<script lang="ts" setup>
++
++import { onMounted, onUnmounted, ref } from 'vue';
++
++import { IStorageStatus } from '@/services/Videos';
++import Videos from '@/services/Videos';
++
++// 録画ストレージの容量情報 (ローカル改造、取得できなかった場合は null のまま表示しない)
++const storage_status = ref<IStorageStatus | null>(null);
++
++// 自動更新用の interval ID を保持
++const refresh_interval = ref<number | null>(null);
++
++// バイト数を人が読みやすい単位 (GB / TB) に整形する
++const formatBytes = (bytes: number): string => {
++    if (bytes >= 1024 ** 4) {
++        return `${(bytes / 1024 ** 4).toFixed(1)} TB`;
++    }
++    if (bytes >= 1024 ** 3) {
++        return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
++    }
++    if (bytes >= 1024 ** 2) {
++        return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
++    }
++    return `${bytes} B`;
++};
++
++// 録画ストレージの容量情報を取得
++const fetchStorageStatus = async () => {
++    storage_status.value = await Videos.getStorageStatus();
++};
++
++// 開始時に取得し、録画の進行に合わせて定期的に更新する
++onMounted(() => {
++    fetchStorageStatus();
++    refresh_interval.value = window.setInterval(fetchStorageStatus, 30 * 1000);
++});
++
++// コンポーネントのクリーンアップ
++onUnmounted(() => {
++    if (refresh_interval.value !== null) {
++        clearInterval(refresh_interval.value);
++        refresh_interval.value = null;
++    }
++});
++
++</script>
++<style lang="scss" scoped>
++
++.storage-status-text {
++    display: inline-flex;
++    align-items: center;
++    gap: 6px;
++    font-size: 13.5px;
++    opacity: 0.75;
++    user-select: none;
++}
++
++</style>
 --- a/client/src/services/Videos.ts
 +++ b/client/src/services/Videos.ts
 @@ -137,6 +137,14 @@ export interface IRecordingResult {
@@ -37,80 +105,75 @@
       * @param video_id 録画番組の ID
 --- a/client/src/views/Videos/Home.vue
 +++ b/client/src/views/Videos/Home.vue
-@@ -15,6 +15,10 @@
+@@ -15,6 +15,7 @@
                              <Icon icon="fluent:clipboard-task-16-filled" width="18px" height="18px" />
                              <span>録画結果</span>
                          </div>
-+                        <div v-if="storage_status" class="videos-home-container__storage">
-+                            <Icon icon="fluent:database-20-regular" width="16px" height="16px" />
-+                            <span>録画 {{ formatBytes(storage_status.recordings_bytes) }} / {{ formatBytes(storage_status.total_bytes) }}（空き {{ formatBytes(storage_status.free_bytes) }}）</span>
-+                        </div>
++                        <StorageStatusText class="videos-home-container__storage" />
                      </div>
                      <RecordingResultsDialog v-model:show="show_recording_results" />
                      <RecordedProgramList
-@@ -73,7 +77,7 @@ import Navigation from '@/components/Navigation.vue';
+@@ -73,6 +74,7 @@ import Navigation from '@/components/Navigation.vue';
  import SPHeaderBar from '@/components/SPHeaderBar.vue';
  import RecordedProgramList from '@/components/Videos/RecordedProgramList.vue';
  import RecordingResultsDialog from '@/components/Videos/RecordingResultsDialog.vue';
--import { IRecordedProgram } from '@/services/Videos';
-+import { IRecordedProgram, IStorageStatus } from '@/services/Videos';
++import StorageStatusText from '@/components/Videos/StorageStatusText.vue';
+ import { IRecordedProgram } from '@/services/Videos';
  import Videos from '@/services/Videos';
  import useSettingsStore from '@/stores/SettingsStore';
- import useUserStore from '@/stores/UserStore';
-@@ -93,6 +97,28 @@ const total_watched_programs = ref(0);
+@@ -93,6 +95,8 @@ const total_watched_programs = ref(0);
  // 録画結果ダイアログの表示状態
  const show_recording_results = ref(false);
  
-+// 録画ストレージの容量情報 (ローカル改造、取得できなかった場合は null のまま表示しない)
-+const storage_status = ref<IStorageStatus | null>(null);
 +
-+// バイト数を人が読みやすい単位 (GB / TB) に整形する
-+const formatBytes = (bytes: number): string => {
-+    if (bytes >= 1024 ** 4) {
-+        return `${(bytes / 1024 ** 4).toFixed(1)} TB`;
-+    }
-+    if (bytes >= 1024 ** 3) {
-+        return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-+    }
-+    if (bytes >= 1024 ** 2) {
-+        return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-+    }
-+    return `${bytes} B`;
-+};
-+
-+// 録画ストレージの容量情報を取得
-+const fetchStorageStatus = async () => {
-+    storage_status.value = await Videos.getStorageStatus();
-+};
 +
  const is_loading = ref(true);
  
  // 自動更新用の interval ID を保持
-@@ -171,6 +197,7 @@ const sectionUpdaters = {
-     recentPrograms: fetchRecentPrograms,
-     mylistPrograms: fetchMylistPrograms,
-     watchedPrograms: fetchWatchedPrograms,
-+    storageStatus: fetchStorageStatus,
- } as const;
- 
- // 全セクションの更新を実行
-@@ -284,6 +311,16 @@ onUnmounted(() => {
+@@ -284,6 +288,10 @@ onUnmounted(() => {
          cursor: pointer;
          user-select: none;
      }
 +    &__storage {
-+        display: inline-flex;
-+        align-items: center;
-+        gap: 6px;
 +        margin-left: 14px;
 +        padding: 7px 0px;
-+        font-size: 13.5px;
-+        opacity: 0.75;
-+        user-select: none;
 +    }
  }
  
  </style>
+--- a/client/src/views/Videos/Programs.vue
++++ b/client/src/views/Videos/Programs.vue
+@@ -17,6 +17,9 @@
+                             <span>ゴミ箱を開く</span>
+                         </RouterLink>
+                     </div>
++                    <div class="storage-status-row">
++                        <StorageStatusText />
++                    </div>
+                     <HighlightsDialog v-model:show="show_highlights" />
+                     <RecordedProgramList
+                         title="録画番組一覧"
+@@ -58,6 +61,7 @@ import HeaderBar from '@/components/HeaderBar.vue';
+ import Navigation from '@/components/Navigation.vue';
+ import SPHeaderBar from '@/components/SPHeaderBar.vue';
+ import HighlightsDialog from '@/components/Videos/HighlightsDialog.vue';
++import StorageStatusText from '@/components/Videos/StorageStatusText.vue';
+ import RecordedProgramList from '@/components/Videos/RecordedProgramList.vue';
+ import { IRecordedProgram, SortOrder } from '@/services/Videos';
+ import Videos from '@/services/Videos';
+@@ -219,6 +223,12 @@ onMounted(async () => {
+     }
+ }
+ 
++.storage-status-row {
++    display: flex;
++    justify-content: flex-end;
++    margin-bottom: 4px;
++}
++
+ .trash-link {
+     display: flex;
+     justify-content: flex-end;
 --- a/server/app/routers/VideosRouter.py
 +++ b/server/app/routers/VideosRouter.py
 @@ -40,6 +40,7 @@ from app.utils.RecorderDeleteSync import (

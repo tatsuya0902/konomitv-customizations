@@ -542,3 +542,4 @@ KonomiTV 本体のパッチではなく、横に置く連携ツール。上の�
 - サーバー：新設 utils/StorageStatus.py が最新の録画ファイルのパスから保存先ファイルシステムを特定し、全体・使用・空き容量と、録画ファイルの合計サイズ（DB の file_size 合計）を返す（60秒キャッシュ）。VideosRouter に GET /api/videos/storage-status（schemas.StorageStatus）を追加
 - クライアント：services/Videos.ts に IStorageStatus と getStorageStatus() を追加。「ビデオをみる」トップ (views/Videos/Home.vue) の録画結果ボタンの横に「録画 XX GB / X.X TB（空き X.X TB）」を表示し、30秒の自動更新に合わせて再取得する。取得できない場合は表示しない
 - 検証（2026-11-15）：本番で単体実行し recordings 61.5GB / 全体 7.2TB / 空き 7.1TB を確認。再起動後に API の応答と、録画中だった番組への影響がないことを確認。パッチチェーン検証（素の v0.14.1 + 8バンドル = 本番ツリー）も一致
+- 追記（同日）：ユーザー指摘で録画番組一覧 (views/Videos/Programs.vue) の上部にも表示を追加。表示は components/Videos/StorageStatusText.vue に共通化し、トップ側も同コンポーネントを使う形に変更（取得・整形・30秒間隔の自己更新はコンポーネント側）。クライアントのみの変更のため再起動不要で本番反映済み
