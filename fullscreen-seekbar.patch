@@ -1,0 +1,25 @@
+--- a/client/src/components/Watch/Watch.vue
++++ b/client/src/components/Watch/Watch.vue
+@@ -432,9 +432,22 @@ html.watch-pseudo-fullscreen body {
+             }
+             @include smartphone-horizontal {
+                 width: calc(100% - (18px * 2)) !important;
++                // フルスクリーン時はシークバーを画面下端から離し、アイコン列と重ならない位置に配置する
++                // あわせて padding で当たり判定の高さを確保し (バー 3px + 上下 16px = 35px)、タップ・ドラッグしやすくする
++                bottom: 54px !important;
++                left: 18px !important;
++                padding: 16px 0;
++                z-index: 100;
+             }
+             @include smartphone-vertical {
+                 width: calc(100% - (18px * 2)) !important;
++                // 縦画面向けの配置 (Player.vue 側でプレイヤー下辺に bottom: -6px で配置) がフルスクリーン時にも効いてしまうと、
++                // プレイヤーが画面全体を占めるためバーが画面の縁にはみ出し、ツマミが半分切れてタップできなくなる
++                // フルスクリーン時は画面下端から離した通常配置に上書きする
++                bottom: 54px !important;
++                left: 18px !important;
++                padding: 16px 0;
++                z-index: 100;
+             }
+         }
+     }
