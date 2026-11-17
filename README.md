@@ -39,6 +39,7 @@
 | 「保護中のみ」フィルタと実際の録画時間表示 | 録画番組一覧に「保護中のみ」チップを追加（「未視聴のみ」との併用は AND）。一覧の時刻行は番組時間ではなく実際の録画時間（録画開始〜終了、秒なし）を表示し、録画期間がない場合は番組時間にフォールバックする | [報告](RECORDER-FEATURES.md)／[パッチ](filter-ui.patch) |
 | フィルタメニューとアイコンオンリー化 | スマホ縦ではフィルタ類を「フィルタ」メニューに集約（未視聴のみ／保護中のみ／今日のハイライト＋並び替え）。ON 件数バッジ付きで、ON 時はピンク。360px幅ではアイコンオンリーになる。デスクトップ／テレビはチップのまま | [報告](RECORDER-FEATURES.md)／[パッチ](filter-ui.patch) |
 | 番組表の色付けとチューナー使用帯 | 予約済み番組を薄い赤で塗り（録画中はより濃く）、番組表の左端の時刻軸に、全予約から集計したチューナー使用帯を表示する。同一物理チャンネルの予約は1台分に集約し、同時使用数の区別は帯の濃さで行う | [パッチ](timetable-coloring.patch) |
+| UI の表示倍率 | ボタンなどの UI 要素の大きさを端末ごとに変更できる設定（プリセット＋50〜150% の数値入力、既定は 100%）。html への CSS zoom で適用し、Safari でビューポート単位が zoom に追随しない分は CSS 変数で補正する。下部ナビの縮小表示時の追随補正も含む | [パッチ](ui-scale.patch) |
 
 改造の経緯や詳細な仕様は [LOCAL-CUSTOMIZATIONS.md](LOCAL-CUSTOMIZATIONS.md) にまとめています。周辺ソフトウェア（EPGStation、Mirakurun、pix-userland）を含めた索引は [CUSTOM-FEATURES.md](CUSTOM-FEATURES.md) を参照してください。
 
@@ -47,7 +48,7 @@
 パッチは KonomiTV v0.14.1 の素のツリーに対して `git apply` で適用できます。全部入れる場合は以下の順序で適用してください（適用順序は検証済み）。
 
 ```bash
-for p in base-integration playback comment-highlights recorder-features refinements tv-support storage-display live-tuner-gating filter-ui mobile-player-controls partially-recorded-tolerance timetable-coloring; do
+for p in base-integration playback comment-highlights recorder-features refinements tv-support storage-display live-tuner-gating filter-ui mobile-player-controls partially-recorded-tolerance timetable-coloring ui-scale; do
   git apply $p.patch
 done
 ```

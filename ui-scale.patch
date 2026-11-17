@@ -1,0 +1,506 @@
+--- a/client/src/App.vue
++++ b/client/src/App.vue
+@@ -8,7 +8,47 @@
+ </template>
+ <script lang="ts" setup>
+ 
++import { onMounted, onUnmounted, watch } from 'vue';
++
+ import Snackbars from '@/components/Snackbars.vue';
++import useSettingsStore from '@/stores/SettingsStore';
++
++const settingsStore = useSettingsStore();
++
++/**
++ * UI の表示倍率 (ui_scale) をページ全体に適用する
++ * - 適用先は documentElement (html 要素) 。Vuetify のオーバーレイ (メニューやダイアログ) は
++ *   document.body 直下に teleport されるため、v-app 要素だけに zoom を付けるとオーバーレイが
++ *   縮小されず、表示位置の計算もずれてしまう。ページ全体を一体でスケールさせることで、
++ *   ブラウザのページズームと同じ座標系で fixed 要素やオーバーレイも一緒にスケールする
++ * - あわせて倍率を CSS 変数 --ui-scale にも設定する。Safari では html への zoom 適用時に
++ *   dvh などのビューポート単位が zoom に追随せず画面の高さより短く算出されるため、
++ *   ビューポート単位で高さを決めている箇所ではこの変数で割って補正する
++ * - 100% のとき (または値が不正なとき) は zoom プロパティ自体を設定しないため、従来の表示と完全に同一になる
++ * - 全画面表示中は、プレイヤーの表示が倍率の影響を受けないよう一時的に適用を外す
++ *   (iPhone の動画全画面再生はネイティブプレイヤーに移るため元々影響を受けないが、PC の全画面表示向けの配慮)
++ */
++function applyUiScale(): void {
++    const ui_scale = settingsStore.settings.ui_scale;
++    const effective_scale = (typeof ui_scale === 'number' && Number.isFinite(ui_scale)) ?
++        Math.min(150, Math.max(50, ui_scale)) : 100;
++    if (effective_scale === 100 || document.fullscreenElement !== null) {
++        document.documentElement.style.removeProperty('zoom');
++        document.documentElement.style.removeProperty('--ui-scale');
++    } else {
++        document.documentElement.style.zoom = `${effective_scale / 100}`;
++        document.documentElement.style.setProperty('--ui-scale', `${effective_scale / 100}`);
++    }
++}
++
++watch(() => settingsStore.settings.ui_scale, applyUiScale);
++onMounted(() => {
++    applyUiScale();
++    document.addEventListener('fullscreenchange', applyUiScale);
++});
++onUnmounted(() => {
++    document.removeEventListener('fullscreenchange', applyUiScale);
++});
+ 
+ </script>
+ <style lang="scss">
+@@ -118,8 +158,9 @@ html {
+ 
+ // アプリケーションのルート
+ .v-application {
+-    min-height: 100vh;
+-    min-height: 100dvh;
++    // --ui-scale は UI の表示倍率 (ui_scale) 適用時のみ設定される (未設定時は 1 として扱い、従来と同一になる)
++    min-height: calc(100vh / var(--ui-scale, 1));
++    min-height: calc(100dvh / var(--ui-scale, 1));
+     font-family: 'Open Sans', 'YakuHanJPs', 'Twemoji', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+     font-weight: 500;
+     overflow-x: clip;  // clip なら position: sticky; が効く
+--- a/client/src/components/BottomNavigation.vue
++++ b/client/src/components/BottomNavigation.vue
+@@ -27,6 +27,157 @@
+         </v-btn>
+     </v-bottom-navigation>
+ </template>
++<script lang="ts" setup>
++
++import { onMounted, onUnmounted, watch } from 'vue';
++
++import useSettingsStore from '@/stores/SettingsStore';
++
++const settingsStore = useSettingsStore();
++
++// iOS Safari でページを縮小表示すると、実際に見えている領域 (visual viewport) が
++// レイアウトの基準となる領域 (layout viewport) よりも広がる一方で、position: fixed の要素は
++// layout viewport を基準に配置され続けるため、下部ナビゲーションが画面の下端から浮いてしまう
++// (下にページ背景の帯が見える状態になる)
++// 縮小表示には2種類あり、どちらもこの形でズレる
++// - ピンチズームアウト: visualViewport.scale が 1 未満になる
++// - Safari のページズーム (aA メニュー): scale は 1 のまま、layout viewport 側の CSS ピクセル寸法が変わる
++//   ため scale では検出できないが、visual viewport が layout viewport からはみ出す点はピンチ時と共通する
++// そこで VisualViewport API で visual viewport が layout viewport からはみ出した量を取得し、
++// CSS 変数経由でスタイル側に渡して配置を補正する
++// 補正量は「はみ出した量」そのものなので、はみ出しがない通常表示 (等倍表示・ページズーム 100%・
++// スクロール・キーボード表示時など) では常に 0 になり、通常表示の見た目は変わらない
++//
++// ホーム画面アプリ (スタンドアロン表示) では事情が異なる。iOS のスタンドアロン表示では
++// UI の表示倍率 (ui_scale) の CSS zoom を適用しても、position: fixed の基準となる領域の
++// 高さが zoom に追随しないことがあり、その場合 dvh を倍率で割って確保したアプリ本体は
++// 画面いっぱいに描かれるのに、bottom: 0 で固定した下部ナビだけが画面の下端より上に
++// 浮いてしまう (下に大きな余白ができる)。上の計算式は innerHeight と visual viewport の
++// 高さが一致してしまうため、このズレを検出できない。
++// そのためスタンドアロン表示のときだけ、下部ナビの実際の描画位置 (getBoundingClientRect) を
++// visual viewport の下端と直接比べて、浮いている分を実測で詰める。
++// 詰める量の換算 (レイアウト上の px と描画位置の px の比) も、試しに 10px ずらして
++// 描画位置の変化量を測ることでその場で実測するため、ブラウザごとの座標系の違いに左右されない。
++// 浮きがなければ何も足さないので、正しく表示されている環境では従来と完全に同一になる。
++// ブラウザ表示では従来の計算式で正しく補正できていることが確認できているため、
++// 実測補正はスタンドアロン表示に限定する
++function isStandaloneDisplay(): boolean {
++    // iOS のホーム画面アプリでは navigator.standalone が true になる
++    // それ以外の環境では display-mode メディア特性で判定する
++    const navigatorWithStandalone = window.navigator as Navigator & {standalone?: boolean};
++    return navigatorWithStandalone.standalone === true ||
++        window.matchMedia('(display-mode: standalone)').matches ||
++        window.matchMedia('(display-mode: fullscreen)').matches;
++}
++
++function updateVisualViewportOffset(): void {
++    const visualViewport = window.visualViewport;
++    if (visualViewport === null || visualViewport === undefined) {
++        return;
++    }
++
++    let offsetLeft = 0;
++    // visual viewport の下端が layout viewport の下端よりどれだけ下にはみ出しているか
++    // (はみ出しがない場合は 0 になる)
++    let offsetBottom = Math.max(0, visualViewport.offsetTop + visualViewport.height - window.innerHeight);
++    // visual viewport の幅が layout viewport の幅よりどれだけ広いか
++    // (広くない場合は 0 になる)
++    const extraWidth = Math.max(0, visualViewport.width - window.innerWidth);
++    // visual viewport の左端が layout viewport の左端からどれだけずれているか
++    // 拡大表示中 (scale > 1) は固定要素も visual viewport に追随して拡大されるのがブラウザの標準的な
++    // 挙動であり、ここでも補正すると二重にずれてしまうため、縮小表示中
++    // (visual viewport が layout viewport からはみ出している場合) のみ補正する
++    if (visualViewport.scale < 1 || extraWidth > 0) {
++        offsetLeft = visualViewport.offsetLeft;
++    }
++
++    const root = document.documentElement;
++    root.style.setProperty('--visual-viewport-offset-left', `${offsetLeft}px`);
++    root.style.setProperty('--visual-viewport-offset-bottom', `${offsetBottom}px`);
++    root.style.setProperty('--visual-viewport-extra-width', `${extraWidth}px`);
++
++    // スタンドアロン表示でのみ、下部ナビの浮きを実測して詰める (詳細は冒頭のコメント参照)
++    if (isStandaloneDisplay()) {
++        offsetBottom = closeStandaloneBottomGap(root, visualViewport, offsetBottom);
++        root.style.setProperty('--visual-viewport-offset-bottom', `${offsetBottom}px`);
++    }
++}
++
++// 下部ナビが visual viewport の下端から浮いている分を実測し、必要な追加の補正量を返す
++// 浮いていない場合・計測できない場合は、渡された補正量をそのまま返す
++function closeStandaloneBottomGap(root: HTMLElement, visualViewport: VisualViewport, offsetBottom: number): number {
++    const navigationElement = document.querySelector<HTMLElement>('.bottom-navigation-container');
++    if (navigationElement === null) {
++        return offsetBottom;
++    }
++    const rectBefore = navigationElement.getBoundingClientRect();
++    if (rectBefore.height === 0) {
++        // スマホ縦画面以外では下部ナビ自体が表示されていないため、何もしない
++        return offsetBottom;
++    }
++
++    // visual viewport の下端とナビの下端の差 (= 浮いている量)
++    const gap = (visualViewport.offsetTop + visualViewport.height) - rectBefore.bottom;
++    if (gap <= 1) {
++        return offsetBottom;
++    }
++
++    // 補正量 (レイアウト上の px) と描画位置の変化量 (getBoundingClientRect の px) の比を実測する
++    // 試行用の変更は同じ処理の中で最終値に上書きされるため、画面に一瞬だけずれて見えることはない
++    const probeAmount = 10;
++    root.style.setProperty('--visual-viewport-offset-bottom', `${offsetBottom + probeAmount}px`);
++    const rectAfterProbe = navigationElement.getBoundingClientRect();
++    const ratio = (rectAfterProbe.bottom - rectBefore.bottom) / probeAmount;
++    if (ratio <= 0.05) {
++        // 補正が描画位置に反映されない環境では、試行用の値を戻して何もしない
++        root.style.setProperty('--visual-viewport-offset-bottom', `${offsetBottom}px`);
++        return offsetBottom;
++    }
++
++    // 浮いている分を詰めるのに必要な追加量 (念のため visual viewport の高さを超えないよう丸める)
++    const additionalOffset = Math.min(gap / ratio, visualViewport.height);
++    return offsetBottom + additionalOffset;
++}
++
++// visualViewport の resize / scroll イベントはズームやスクロールに伴い連続して発生するため、
++// requestAnimationFrame で間引いてから補正量を更新する
++let animationFrameId: number | null = null;
++function onVisualViewportChange(): void {
++    if (animationFrameId !== null) {
++        return;
++    }
++    animationFrameId = requestAnimationFrame(() => {
++        animationFrameId = null;
++        updateVisualViewportOffset();
++    });
++}
++
++// UI の表示倍率が変わったときにも補正量を計算し直す
++// 特にスタンドアロン表示では、CSS zoom の変更に visualViewport の resize が
++// 伴わないことがあるため、設定の変更を直接のきっかけにする
++watch(() => settingsStore.settings.ui_scale, () => {
++    onVisualViewportChange();
++});
++
++onMounted(() => {
++    // VisualViewport API 非対応のブラウザでは何もしない (従来通りの表示になる)
++    if (window.visualViewport === null || window.visualViewport === undefined) {
++        return;
++    }
++    window.visualViewport.addEventListener('resize', onVisualViewportChange);
++    window.visualViewport.addEventListener('scroll', onVisualViewportChange);
++    updateVisualViewportOffset();
++});
++onUnmounted(() => {
++    window.visualViewport?.removeEventListener('resize', onVisualViewportChange);
++    window.visualViewport?.removeEventListener('scroll', onVisualViewportChange);
++    if (animationFrameId !== null) {
++        cancelAnimationFrame(animationFrameId);
++        animationFrameId = null;
++    }
++});
++
++</script>
+ <style lang="scss">
+ 
+ .bottom-navigation-container .v-btn--active > .v-btn__overlay {
+@@ -46,15 +197,31 @@
+ 
+     @include smartphone-vertical {
+         display: flex;
++        // UI の表示倍率 (ui_scale) 適用時は、レイアウト幅が倍率の逆数倍に変わる
++        // 横パディングとボタンの最小幅 (下記) を px のままにすると、拡大時 (例: 130%) に
++        // ボタン5つ分の最小幅がレイアウト幅を超え、中央寄せのコンテンツが両端に
++        // はみ出して端のボタンが画面外に切れてしまうため、両方を倍率で割って補正する
++        // 補正後の寸法は倍率で割る分だけ小さくなり、はみ出し量は倍率によらず
++        // 100% のときと同等 (≒ 1px) に収まる
++        // --ui-scale は倍率適用時のみ設定される変数で、未設定時 (= 100%) は 1 として
++        // 扱われるため、その場合は従来と完全に同一の寸法になる
++        --bottom-navigation-horizontal-padding: calc(8px / var(--ui-scale, 1));
++        // 縮小表示時は visual viewport の幅に合わせて広げる (等倍表示では 0 が入るため幅は変わらない)
++        width: calc(100% - var(--bottom-navigation-horizontal-padding) * 2 + var(--visual-viewport-extra-width, 0px)) !important;
+         // iPhone X 以降の Home Indicator の高さ分
+-        width: calc(100% - 8px * 2) !important;
+         padding-bottom: env(safe-area-inset-bottom);
++        padding-left: var(--bottom-navigation-horizontal-padding);
++        padding-right: var(--bottom-navigation-horizontal-padding);
+         box-sizing: content-box;
++        // 縮小表示時に visual viewport の左端・下端へ追随させる (等倍表示では 0 が入るため位置は変わらない)
++        // Vuetify が transform で表示/非表示を制御しているため、transform とは独立に合成される translate プロパティを使う
++        translate: var(--visual-viewport-offset-left, 0px) var(--visual-viewport-offset-bottom, 0px);
+     }
+ 
+     .v-btn.bottom-navigation-button {
+         flex-basis: 0;  // 均等に割り振る
+-        min-width: 75px !important;
++        // 最小幅も UI の表示倍率で割る (理由は .bottom-navigation-container 側のコメント参照)
++        min-width: calc(75px / var(--ui-scale, 1)) !important;
+         padding: 0 !important;
+         color: rgb(var(--v-theme-text-darken-1)) !important;
+         font-weight: bold;
+--- a/client/src/components/Reservations/ReservationDetailDrawer.vue
++++ b/client/src/components/Reservations/ReservationDetailDrawer.vue
+@@ -553,8 +553,12 @@ const handleAddReservation = async () => {
+     }
+ 
+     // スマートフォンでは左側に少しスクリムが見えるように調整
++    // position: fixed の要素では % がビューポート幅基準になるため、vw の代わりに % で指定する
++    // Safari では vw が UI の表示倍率 (ui_scale) の CSS zoom に追随せず、倍率適用時に
++    // 意図より狭く (縮小時) / 広く (拡大時) なってしまうため (dvh の問題の横版)
++    // 100% のときは 100vw と同一の幅になる
+     @media (max-width: 480px) {
+-        width: calc(100vw - 32px);
++        width: calc(100% - 32px);
+         border-top-left-radius: 16px;
+         border-bottom-left-radius: 16px;
+     }
+--- a/client/src/components/Watch/Watch.vue
++++ b/client/src/components/Watch/Watch.vue
+@@ -161,7 +161,7 @@ html.watch-pseudo-fullscreen body {
+     min-width: 0 !important;
+     min-height: 0 !important;
+     width: var(--pseudo-width, 100%) !important;
+-    height: var(--pseudo-height, 100dvh) !important;
++    height: var(--pseudo-height, calc(100dvh / var(--ui-scale, 1))) !important;
+     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+     background: rgb(var(--v-theme-black));
+     transition: none;
+@@ -475,8 +475,8 @@ html.watch-pseudo-fullscreen body {
+ <style lang="scss" scoped>
+ 
+ .route-container {
+-    height: 100vh !important;
+-    height: 100dvh !important;
++    height: calc(100vh / var(--ui-scale, 1)) !important;
++    height: calc(100dvh / var(--ui-scale, 1)) !important;
+     border-bottom: env(safe-area-inset-bottom) solid rgb(var(--v-theme-background));  // Home Indicator 分浮かせる余白の背景色
+     background: rgb(var(--v-theme-black)) !important;
+     overflow: hidden;
+--- a/client/src/services/Settings.ts
++++ b/client/src/services/Settings.ts
+@@ -45,6 +45,7 @@ export interface IClientSettings {
+     timetable_genre_colors: ITimeTableGenreColors;
+     show_player_background_image: boolean;
+     use_pure_black_player_background: boolean;
++    // ui_scale: 同期無効
+     tv_channel_sort_by_jikkyo_force: boolean;
+     tv_channel_up_down_buttons_reverse: boolean;
+     tv_channel_selection_requires_alt_key: boolean;
+--- a/client/src/stores/SettingsStore.ts
++++ b/client/src/stores/SettingsStore.ts
+@@ -75,6 +75,7 @@ export interface ILocalClientSettings extends IClientSettings {
+     timetable_genre_colors: ITimeTableGenreColors;
+     show_player_background_image: boolean;
+     use_pure_black_player_background: boolean;
++    ui_scale: number;
+     tv_channel_sort_by_jikkyo_force: boolean;
+     tv_channel_up_down_buttons_reverse: boolean;
+     tv_channel_selection_requires_alt_key: boolean;
+@@ -224,6 +225,9 @@ export const ILocalClientSettingsDefault: ILocalClientSettings = {
+     show_player_background_image: true,
+     // プレイヤー表示領域の背景色を完全な黒にする (Default: オフ)
+     use_pure_black_player_background: false,
++    // UI の表示倍率 (Default: 100%) (同期無効)
++    // ボタンなどの UI 要素が大きく感じるデバイス向けに、このデバイスでのみ表示倍率を変更できる
++    ui_scale: 100,
+     // チャンネル一覧を実況勢いが強い順に並び替える (Default: オフ)
+     tv_channel_sort_by_jikkyo_force: false,
+     // チャンネル切り替えボタンとショートカットキーの上下方向をテレビリモコン準拠にする (Default: オフ)
+@@ -404,6 +408,7 @@ export const SYNCABLE_SETTINGS_KEYS: (keyof IClientSettings)[] = [
+     'timetable_genre_colors',
+     'show_player_background_image',
+     'use_pure_black_player_background',
++    // ui_scale: 同期無効
+     'tv_channel_sort_by_jikkyo_force',
+     'tv_channel_up_down_buttons_reverse',
+     'tv_channel_selection_requires_alt_key',
+--- a/client/src/views/Login.vue
++++ b/client/src/views/Login.vue
+@@ -113,6 +113,13 @@ export default defineComponent({
+     }
+     @include smartphone-vertical {
+         margin-bottom: 0px !important;
++        // 左右の余白はカード側の固定マージンではなく、ラッパー側の padding で確保する
++        // カードに固定マージンを付けると mx-auto による中央寄せが効かなくなり、
++        // UI の表示倍率 (ui_scale) の縮小でレイアウト幅が広がってカードの max-width が
++        // 効いたときに、余った幅が右側に寄ってカード全体が左寄りにずれてしまうため
++        // (100% のときはカード幅 = ラッパー幅 - 24px で従来と同一の見た目になる)
++        padding-left: 12px;
++        padding-right: 12px;
+     }
+ 
+     .login-container {
+@@ -123,8 +130,6 @@ export default defineComponent({
+         }
+         @include smartphone-vertical {
+             padding: 32px 20px !important;
+-            margin-left: 12px !important;
+-            margin-right: 12px !important;
+         }
+ 
+         .login__logo {
+--- a/client/src/views/Register.vue
++++ b/client/src/views/Register.vue
+@@ -125,6 +125,13 @@ export default defineComponent({
+     }
+     @include smartphone-vertical {
+         margin-bottom: 0px !important;
++        // 左右の余白はカード側の固定マージンではなく、ラッパー側の padding で確保する
++        // カードに固定マージンを付けると mx-auto による中央寄せが効かなくなり、
++        // UI の表示倍率 (ui_scale) の縮小でレイアウト幅が広がってカードの max-width が
++        // 効いたときに、余った幅が右側に寄ってカード全体が左寄りにずれてしまうため
++        // (100% のときはカード幅 = ラッパー幅 - 24px で従来と同一の見た目になる)
++        padding-left: 12px;
++        padding-right: 12px;
+     }
+ 
+     .register-container {
+@@ -135,8 +142,6 @@ export default defineComponent({
+         }
+         @include smartphone-vertical {
+             padding: 32px 20px !important;
+-            margin-left: 12px !important;
+-            margin-right: 12px !important;
+         }
+ 
+         .register__logo {
+--- a/client/src/views/Settings/General.vue
++++ b/client/src/views/Settings/General.vue
+@@ -52,6 +52,24 @@
+                     v-model="settingsStore.settings.use_pure_black_player_background">
+                 </v-switch>
+             </div>
++            <div class="settings__item">
++                <div class="settings__item-heading">UI の表示倍率</div>
++                <div class="settings__item-label">
++                    ボタンや文字など、画面全体の表示倍率をこのデバイスでのみ変更できます。デフォルトは 100% (標準) です。<br>
++                    UI の要素が大きく感じる場合は小さい倍率を、逆に小さくて見づらい場合は大きい倍率を選んでください。プリセットから選ぶか、下の欄に 50% 〜 150% の数値を直接入力できます。<br>
++                    この設定は端末ごとに保存されるため、家族で共有しているデバイスなど、他のデバイスの表示には影響しません。<br>
++                </div>
++                <v-select class="settings__item-form" color="primary" variant="outlined" hide-details
++                    :density="is_form_dense ? 'compact' : 'default'"
++                    :items="ui_scale_presets" v-model="settingsStore.settings.ui_scale">
++                </v-select>
++                <v-text-field class="settings__item-form mt-3" color="primary" variant="outlined" hide-details
++                    type="number" min="50" max="150" step="5" suffix="%"
++                    :density="is_form_dense ? 'compact' : 'default'"
++                    v-model.number="settingsStore.settings.ui_scale"
++                    @change="clampUiScale()">
++                </v-text-field>
++            </div>
+             <v-divider class="mt-6"></v-divider>
+             <div class="settings__item settings__item--switch">
+                 <label class="settings__item-heading" for="tv_channel_sort_by_jikkyo_force">チャンネル一覧を実況勢いが強い順に並び替える</label>
+@@ -350,6 +368,14 @@ export default defineComponent({
+                 {title: 'Twitter タブ', value: 'Twitter'},
+             ],
+ 
++            // UI の表示倍率のプリセットの選択肢
++            ui_scale_presets: [
++                {title: '80%', value: 80},
++                {title: '90%', value: 90},
++                {title: '100% (標準)', value: 100},
++                {title: '110%', value: 110},
++            ],
++
+             // ビデオをみるときにデフォルトで表示されるパネルのタブの選択肢
+             video_panel_active_tab: [
+                 {title: '番組情報タブ', value: 'RecordedProgram'},
+@@ -374,6 +400,17 @@ export default defineComponent({
+     },
+     methods: {
+ 
++        // UI の表示倍率を妥当な範囲 (50% 〜 150%) に収める
++        // 数値入力欄の値が確定したタイミング (フォーカスが外れたときなど) に実行されるため、入力途中の値が勝手に丸められることはない
++        clampUiScale() {
++            const ui_scale = this.settingsStore.settings.ui_scale;
++            if (typeof ui_scale !== 'number' || Number.isFinite(ui_scale) === false) {
++                this.settingsStore.settings.ui_scale = 100;
++            } else {
++                this.settingsStore.settings.ui_scale = Math.min(150, Math.max(50, Math.round(ui_scale)));
++            }
++        },
++
+         // 設定データをエクスポートする
+         exportSettings() {
+ 
+--- a/client/src/views/TV/Home.vue
++++ b/client/src/views/TV/Home.vue
+@@ -438,8 +438,8 @@ export default defineComponent({
+         .swiper-slide {
+             display: flex;
+             flex-direction: column;
+-            min-height: calc(100vh - var(--header-height) - var(--channels-tab-height) - var(--channels-list-padding-bottom) - var(--bottom-navigation-height));
+-            min-height: calc(100dvh - var(--header-height) - var(--channels-tab-height) - var(--channels-list-padding-bottom) - var(--bottom-navigation-height));
++            min-height: calc(100vh / var(--ui-scale, 1) - var(--header-height) - var(--channels-tab-height) - var(--channels-list-padding-bottom) - var(--bottom-navigation-height));
++            min-height: calc(100dvh / var(--ui-scale, 1) - var(--header-height) - var(--channels-tab-height) - var(--channels-list-padding-bottom) - var(--bottom-navigation-height));
+         }
+ 
+         .channels {
+--- a/client/src/views/TV/Search.vue
++++ b/client/src/views/TV/Search.vue
+@@ -429,7 +429,11 @@ onBeforeUnmount(() => {
+     bottom: 0;
+     left: 0;
+     width: 370px;
+-    max-width: calc(100vw - 32px);
++    // position: fixed の要素では % がビューポート幅基準になるため、vw の代わりに % で指定する
++    // Safari では vw が UI の表示倍率 (ui_scale) の CSS zoom に追随せず、倍率適用時に
++    // 意図より狭く (縮小時) / 広く (拡大時) なってしまうため (dvh の問題の横版)
++    // 100% のときは 100vw と同一の幅になる
++    max-width: calc(100% - 32px);
+     flex-direction: column;
+     background: rgb(var(--v-theme-background));
+     border-top-right-radius: 16px;
+@@ -465,7 +469,7 @@ onBeforeUnmount(() => {
+     }
+ 
+     @include smartphone-vertical {
+-        width: calc(100vw - 32px);
++        width: calc(100% - 32px);
+     }
+ 
+     :deep(.program-search-filters) {
+--- a/client/src/views/TimeTable.vue
++++ b/client/src/views/TimeTable.vue
+@@ -780,16 +780,18 @@ watch(() => timetableStore.selected_date, () => {
+     // 番組表はビューポート内でスクロールさせるため、高さを明示的に制限する
+     // App.vue の main は min-height: 100% で拡大可能なため、ここで高さを制限しないとスクロールが効かない
+     // ヘッダー (65px) と ナビゲーション幅は Navigation コンポーネント側で調整されている
+-    height: calc(100vh - 65px);
+-    height: calc(100dvh - 65px);  // iOS Safari 対応
++    // UI の表示倍率 (ui_scale) 適用時は、Safari でビューポート単位が zoom に追随しない分を --ui-scale で割って補正する
++    // (--ui-scale 未設定 = 倍率 100% のときは 1 で割るため従来と同一になる)
++    height: calc(100vh / var(--ui-scale, 1) - 65px);
++    height: calc(100dvh / var(--ui-scale, 1) - 65px);  // iOS Safari 対応
+     @include smartphone-horizontal {
+-        height: 100vh;
+-        height: 100dvh;
++        height: calc(100vh / var(--ui-scale, 1));
++        height: calc(100dvh / var(--ui-scale, 1));
+     }
+     @include smartphone-vertical {
+         // スマホ縦画面ではヘッダーなし + ボトムナビゲーションバー (56px) + safe-area
+-        height: calc(100vh - 56px - env(safe-area-inset-bottom));
+-        height: calc(100dvh - 56px - env(safe-area-inset-bottom));
++        height: calc(100vh / var(--ui-scale, 1) - 56px - env(safe-area-inset-bottom));
++        height: calc(100dvh / var(--ui-scale, 1) - 56px - env(safe-area-inset-bottom));
+     }
+     background: rgb(var(--v-theme-background));
+ 
