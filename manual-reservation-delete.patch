@@ -1,0 +1,347 @@
+--- a/client/src/components/TimeTable/TimeTableProgramCell.vue
++++ b/client/src/components/TimeTable/TimeTableProgramCell.vue
+@@ -48,7 +48,7 @@
+                     <Icon icon="fluent:play-16-filled" width="16px" />
+                     <span>視聴</span>
+                 </v-btn>
+-                <!-- 録画予約ボタン: 予約なしの場合は追加、予約ありの場合は有効/無効切替 -->
++                <!-- 録画予約ボタン: 予約なしの場合は追加、予約ありの場合は有効/無効切替 (手動予約は削除) -->
+                 <v-btn variant="flat" size="small"
+                     class="timetable-program-cell__action-button"
+                     :class="{
+@@ -206,6 +206,15 @@ const isReservationDisabled = computed(() => {
+     return props.program.reservation?.status === 'Disabled';
+ });
+ 
++/**
++ * 手動予約の場合
++ * 手動予約は無効化できないため、有効/無効切替の代わりに削除ボタンを表示する
++ * (is_manual は TimeTableStore が予約一覧の comment から補完する)
++ */
++const isManualReservation = computed(() => {
++    return props.program.reservation?.is_manual === true;
++});
++
+ /**
+  * 一部のみ録画の場合
+  */
+@@ -260,6 +269,7 @@ const reservationIcon = computed(() => {
+ /**
+  * 録画予約ボタンのアイコン
+  * 予約なし: 追加アイコン、予約あり有効: チェックアイコン、予約あり無効: オフアイコン
++ * 手動予約 (有効): 無効化できないため削除アイコン
+  */
+ const reservationButtonIcon = computed(() => {
+     if (!hasReservation.value) {
+@@ -268,12 +278,16 @@ const reservationButtonIcon = computed(() => {
+     if (isReservationDisabled.value) {
+         return 'mdi:timer-play-outline';  // 無効 → 有効に切替
+     }
++    if (isManualReservation.value) {
++        return 'fluent:delete-16-regular';  // 手動予約は削除のみ可能
++    }
+     return 'mdi:timer-pause-outline';  // 有効 → 無効に切替
+ });
+ 
+ /**
+  * 録画予約ボタンのラベル
+  * 予約なし: 録画予約、予約あり有効: 予約を無効化、予約あり無効: 予約を有効化
++ * 手動予約 (有効): 無効化できないため「削除」
+  * チャンネル幅が狭い画面では「有効化」「無効化」に短縮
+  */
+ const reservationButtonLabel = computed(() => {
+@@ -293,6 +307,9 @@ const reservationButtonLabel = computed(() => {
+     if (isReservationDisabled.value) {
+         return shouldShorten ? '有効化' : '予約を有効化';
+     }
++    if (isManualReservation.value) {
++        return '削除';
++    }
+     return shouldShorten ? '無効化' : '予約を無効化';
+ });
+ 
+--- a/client/src/services/Programs.ts
++++ b/client/src/services/Programs.ts
+@@ -166,6 +166,10 @@ export interface ITimeTableProgramReservation {
+     id: number;
+     status: 'Reserved' | 'Recording' | 'Disabled';
+     recording_availability: 'Full' | 'Partial' | 'Unavailable';
++    // 手動予約かどうか (サーバーの番組表 API は返さないため、クライアント側で予約一覧の
++    // comment から補完する: TimeTableStore.fetchTimeTableData を参照)
++    // 手動予約は無効化できないため、番組表のセルでは無効化の代わりに削除ボタンを表示する
++    is_manual?: boolean;
+ }
+ 
+ /**
+--- a/client/src/stores/TimeTableStore.ts
++++ b/client/src/stores/TimeTableStore.ts
+@@ -5,9 +5,12 @@ import { computed, ref, shallowRef, watch } from 'vue';
+ 
+ import type { Dayjs } from 'dayjs';
+ 
++import APIClient from '@/services/APIClient';
+ import { ChannelType, ChannelTypePretty } from '@/services/Channels';
+ import Programs, { ITimeTableChannel, ITimeTableTunerBusyInterval } from '@/services/Programs';
++import { IReservations } from '@/services/Reservations';
+ import useChannelsStore from '@/stores/ChannelsStore';
++import useServerSettingsStore from '@/stores/ServerSettingsStore';
+ import useSettingsStore from '@/stores/SettingsStore';
+ import { dayjs } from '@/utils';
+ 
+@@ -41,6 +44,8 @@ const useTimeTableStore = defineStore('timetable', () => {
+     const settings_store = useSettingsStore();
+     // チャンネルストアを取得 (storeToRefs は使わず、直接プロパティにアクセスしてリアクティビティを確保)
+     const channels_store = useChannelsStore();
++    // サーバー設定ストアを取得 (EDCB バックエンドかどうかの判定に使う)
++    const server_settings_store = useServerSettingsStore();
+ 
+     // 選択中のチャンネルタイプ (表示名で管理)
+     // 初期値は null とし、initialLoad() で ChannelsStore の状態に基づいて決定する
+@@ -294,6 +299,63 @@ const useTimeTableStore = defineStore('timetable', () => {
+     }
+ 
+ 
++    /**
++     * 各番組の予約に「手動予約かどうか (is_manual)」を補完する
++     * 番組表 API の予約情報には手動/自動の区別が含まれないため、予約一覧 API の comment から判定する
++     * キーワード自動予約で作成された予約の comment には 'EPG自動予約' が含まれる
++     * (ReservationDetailDrawer や ReservationRecordingSettings と同じ判定の流儀)
++     * 手動予約は無効化できないため、番組表のセルで無効化の代わりに削除ボタンを出す判定に使う
++     * @param channels 番組表のチャンネルデータ (破壊的に補完する)
++     */
++    async function annotateManualReservations(channels: ITimeTableChannel[]): Promise<void> {
++
++        // 予約が1件もない場合は補完不要
++        const has_any_reservation = channels.some((channel) =>
++            channel.programs.some((program) => program.reservation !== null) ||
++            (channel.subchannels ?? []).some((subchannel) =>
++                subchannel.programs.some((program) => program.reservation !== null)));
++        if (has_any_reservation === false) {
++            return;
++        }
++
++        // 予約一覧 API は EDCB バックエンド専用のため、それ以外では補完しない
++        // (サーバー設定が未取得の場合も、誤判定を避けるため補完しない)
++        if (server_settings_store.is_loaded === false ||
++            server_settings_store.server_settings.general.backend !== 'EDCB') {
++            return;
++        }
++
++        // 予約一覧を取得する (失敗時は補完せず、従来の表示にフォールバックする)
++        // Reservations.fetchReservations() はエラー時に汎用エラーを表示するため、ここでは APIClient を直接使う
++        const response = await APIClient.get<IReservations>('/recording/reservations');
++        if (response.type === 'error') {
++            return;
++        }
++
++        // 手動予約 (キーワード自動予約でない予約) の ID セットを作成
++        const manual_reservation_ids = new Set(
++            response.data.reservations
++                .filter((reservation) => (reservation.comment ?? '').includes('EPG自動予約') === false)
++                .map((reservation) => reservation.id),
++        );
++
++        // 各番組の予約に is_manual を補完する
++        for (const channel of channels) {
++            const program_lists = [
++                channel.programs,
++                ...(channel.subchannels ?? []).map((subchannel) => subchannel.programs),
++            ];
++            for (const programs of program_lists) {
++                for (const program of programs) {
++                    if (program.reservation !== null) {
++                        program.reservation.is_manual = manual_reservation_ids.has(program.reservation.id);
++                    }
++                }
++            }
++        }
++    }
++
++
+     /**
+      * 番組表データを API から取得する
+      * @param start_time 開始日時 (省略時は selected_date、36時間表示時は16:00)
+@@ -344,6 +406,9 @@ const useTimeTableStore = defineStore('timetable', () => {
+             return false;
+         }
+ 
++        // 各番組の予約に手動予約かどうかを補完してから、番組表データを更新する
++        await annotateManualReservations(response.channels);
++
+         // 番組表データを更新
+         // shallowRef でリアクティブ化の負荷を抑えつつ差し替えのみ検知する
+         channels_data.value = response.channels;
+--- a/client/src/views/TimeTable.vue
++++ b/client/src/views/TimeTable.vue
+@@ -119,6 +119,47 @@
+             @updated="onReservationUpdated"
+             @deleted="onReservationDeleted"
+         />
++        <!-- クイック削除確認ダイアログ (手動予約用、ReservationDetailDrawer の削除確認と同じ文言・構成) -->
++        <v-dialog v-model="showQuickDeleteDialog" max-width="715">
++            <v-card>
++                <v-card-title class="d-flex justify-center pt-6 font-weight-bold">
++                    録画予約を削除しますか？
++                </v-card-title>
++                <v-card-text class="pt-2 pb-0">
++                    <div v-if="quickDeleteReservation" class="mb-4">
++                        <div class="text-h6 text-text mb-2"
++                            v-html="ProgramUtils.decorateProgramInfo(quickDeleteReservation.program, 'title')"></div>
++                        <div class="text-body-2 text-text-darken-1">
++                            {{ ProgramUtils.getProgramTime(quickDeleteReservation.program) }}
++                        </div>
++                    </div>
++                    <div v-if="quickDeleteReservation?.is_recording_in_progress" class="quick-delete-warning quick-delete-warning--recording">
++                        <Icon icon="fluent:warning-16-filled" class="quick-delete-warning__icon" />
++                        <span class="quick-delete-warning__text">
++                            この番組は現在録画中です。<br>
++                            予約を削除すると、現在までの録画ファイルは残りますが、残りの期間の録画は中断されます。
++                        </span>
++                    </div>
++                    <div v-else-if="quickDeleteReservation" class="quick-delete-warning quick-delete-warning--normal">
++                        <Icon icon="fluent:info-16-regular" class="quick-delete-warning__icon" />
++                        <span class="quick-delete-warning__text">
++                            録画予約を削除すると、番組開始時刻までに再度予約を追加しない限り、この番組は録画されません。
++                        </span>
++                    </div>
++                </v-card-text>
++                <v-card-actions class="pt-4 px-6 pb-6">
++                    <v-spacer></v-spacer>
++                    <v-btn color="text" variant="text" @click="showQuickDeleteDialog = false">
++                        <Icon icon="fluent:dismiss-20-regular" width="18px" height="18px" />
++                        <span class="ml-1">キャンセル</span>
++                    </v-btn>
++                    <v-btn class="px-3" color="error" variant="flat" @click="confirmQuickDeleteReservation">
++                        <Icon icon="fluent:delete-20-regular" width="18px" height="18px" />
++                        <span class="ml-1">予約を削除</span>
++                    </v-btn>
++                </v-card-actions>
++            </v-card>
++        </v-dialog>
+     </div>
+ </template>
+ <script lang="ts" setup>
+@@ -140,6 +181,7 @@ import Reservations, { IReservation, IRecordSettings, IRecordSettingsDefault } f
+ import useServerSettingsStore from '@/stores/ServerSettingsStore';
+ import useTimeTableStore, { CHANNEL_TYPE_DISPLAY_ORDER } from '@/stores/TimeTableStore';
+ import Utils, { dayjs } from '@/utils';
++import { ProgramUtils } from '@/utils/ProgramUtils';
+ 
+ 
+ // ストア
+@@ -195,6 +237,10 @@ async function getDefaultRecordSettings(): Promise<IRecordSettings> {
+ const isSettingsDialogOpen = ref(false);
+ const isDateMenuOpen = ref(false);
+ 
++// クイック削除確認ダイアログ (番組表のセルで手動予約の「削除」が押された時に表示)
++const showQuickDeleteDialog = ref(false);
++const quickDeleteReservation = ref<IReservation | null>(null);
++
+ // ウィンドウリサイズ時にリアクティブに再計算をトリガーするためのカウンター
+ // window.innerWidth や window.matchMedia() の結果は Vue のリアクティブシステムでは追跡されないため、
+ // リサイズイベント発火時にこのカウンターをインクリメントし、computed がこの値を参照することで再計算をトリガーする
+@@ -643,6 +689,7 @@ async function onReservationDeleted(): Promise<void> {
+  * 番組セルの「録画予約」ボタンが押された時:
+  * - 予約がない場合: デフォルト設定でワンクリック予約追加
+  * - 既存予約がある場合: 予約の有効/無効を切り替え
++ *   ただし有効な手動予約は無効化できないため、削除確認ダイアログを開く
+  * @param programId 番組 ID
+  * @param channel 番組が属するチャンネル情報
+  * @param program 番組情報
+@@ -668,6 +715,16 @@ async function onQuickReserve(programId: string, channel: IChannel, program: ITi
+             return;
+         }
+ 
++        // 手動予約は無効化できない (EPGStation 側に対応する状態がない) ため、
++        // 有効な手動予約の場合は切り替えではなく削除確認ダイアログを開く
++        // キーワード自動予約かどうかは comment で判定する (ReservationDetailDrawer と同じ流儀)
++        const isKeywordAutoReservation = (reservation.comment ?? '').includes('EPG自動予約');
++        if (reservation.record_settings.is_enabled === true && isKeywordAutoReservation === false) {
++            quickDeleteReservation.value = reservation;
++            showQuickDeleteDialog.value = true;
++            return;
++        }
++
+         // 有効/無効を切り替え
+         const newSettings = structuredClone(reservation.record_settings);
+         newSettings.is_enabled = !newSettings.is_enabled;
+@@ -694,6 +751,27 @@ async function onQuickReserve(programId: string, channel: IChannel, program: ITi
+     }
+ }
+ 
++/**
++ * クイック削除の確定時のハンドラ
++ * 手動予約の削除確認ダイアログで「予約を削除」が押された時に予約を削除する
++ */
++async function confirmQuickDeleteReservation(): Promise<void> {
++    showQuickDeleteDialog.value = false;
++    if (quickDeleteReservation.value === null) {
++        return;
++    }
++
++    const reservationId = quickDeleteReservation.value.id;
++    quickDeleteReservation.value = null;
++
++    const success = await Reservations.deleteReservation(reservationId);
++    if (success) {
++        Message.success('録画予約を削除しました。');
++        // 番組表データを再取得して予約状態を更新
++        await timetableStore.fetchTimeTableData();
++    }
++}
++
+ // ライフサイクル
+ onMounted(async () => {
+     // ウィンドウリサイズイベントリスナーを登録
+@@ -1113,4 +1191,51 @@ watch(() => timetableStore.selected_date, () => {
+     }
+ }
+ 
++// クイック削除確認ダイアログの警告バナー (ReservationDetailDrawer の warning-banner と同じ見た目)
++.quick-delete-warning {
++    display: flex;
++    align-items: center;
++    padding: 12px 16px;
++    border-radius: 6px;
++
++    &__icon {
++        width: 22px;
++        height: 22px;
++        margin-right: 8px;
++        flex-shrink: 0;
++    }
++
++    &__text {
++        font-size: 13px;
++        font-weight: 500;
++        line-height: 1.55;
++    }
++
++    // 録画中の警告 (エラー色)
++    &--recording {
++        background-color: rgb(var(--v-theme-error-darken-3), 0.5);
++
++        .quick-delete-warning__icon {
++            color: rgb(var(--v-theme-error));
++        }
++
++        .quick-delete-warning__text {
++            color: rgb(var(--v-theme-error-lighten-1));
++        }
++    }
++
++    // 通常の警告 (情報色)
++    &--normal {
++        background-color: rgb(var(--v-theme-info-darken-3), 0.5);
++
++        .quick-delete-warning__icon {
++            color: rgb(var(--v-theme-info));
++        }
++
++        .quick-delete-warning__text {
++            color: rgb(var(--v-theme-info-lighten-1));
++        }
++    }
++}
++
+ </style>
