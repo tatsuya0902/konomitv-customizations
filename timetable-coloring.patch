@@ -1,0 +1,493 @@
+--- a/client/src/components/TimeTable/TimeTableGrid.vue
++++ b/client/src/components/TimeTable/TimeTableGrid.vue
+@@ -40,6 +40,7 @@
+                         <TimeTableTimeScale
+                             :hourHeight="hourHeight"
+                             :is36HourDisplay="props.is36HourDisplay"
++                            :tunerBusyIntervals="timetableStore.tuner_busy_intervals"
+                         />
+                     </div>
+                     <!-- 番組グリッド本体 -->
+--- a/client/src/components/TimeTable/TimeTableProgramCell.vue
++++ b/client/src/components/TimeTable/TimeTableProgramCell.vue
+@@ -317,15 +317,9 @@ const baseHighlightColor = computed(() => {
+  * セルの背景色
+  */
+ const baseBackgroundColor = computed(() => {
+-    // 録画不可の場合は赤背景
+-    if (isUnavailableRecording.value) {
+-        return '#f8d7da';
+-    }
+-    // 一部のみ録画の場合は黄色背景
+-    if (isPartialRecording.value) {
+-        return '#fff3cd';
+-    }
+     // 通常はジャンル色の淡い版
++    // 予約済み・録画中・一部のみ・録画不可の塗りは、CSS 側の modifier クラスで
++    // この色にテーマ色 (secondary / warning / error) を color-mix で重ねて表現する
+     const genreMajor = props.program.genres?.[0]?.major;
+     const colors = TimeTableUtils.getGenreColors(genreMajor, settingsStore.settings.timetable_genre_colors);
+     return colors.background;
+@@ -482,6 +476,15 @@ watch(isExpanded, async (value) => {
+ <style lang="scss" scoped>
+ 
+ .timetable-program-cell {
++    // ===== 予約セルの色付け調整ポイント (見た目を変える場合はこの変数だけを変更する) =====
++    // テーマ色をジャンル色の背景に混ぜる割合 (塗りの濃さ)
++    --timetable-reserved-fill-ratio: 22%;  // 予約済み
++    --timetable-recording-fill-ratio: 38%;  // 録画中
++    --timetable-partial-fill-ratio: 30%;  // 一部のみ録画
++    --timetable-unavailable-fill-ratio: 32%;  // 録画不可
++    // 文字色は --timetable-program-cell-fg / --timetable-program-cell-fg-sub 変数で切り替える
++    // (初期値は未定義 = 従来の文字色。ベタ塗り + 白文字にする場合は &--reserved ブロック内の同名変数を有効化する)
++
+     display: flex;
+     align-items: stretch;
+     position: absolute;
+@@ -574,27 +577,52 @@ watch(isExpanded, async (value) => {
+         }
+     }
+ 
+-    // 予約あり
++    // 予約あり: 実線の枠
+     &--reserved {
+-        border: 3.8px dashed rgb(var(--v-theme-secondary));
++        border: 3.8px solid rgb(var(--v-theme-secondary));
++
++        // ベタ塗り + 白文字に切り替える場合は、塗りの割合 (--timetable-reserved-fill-ratio) を
++        // 大きくした上で、以下の文字色変数を有効化する (録画中セルにも同じ文字色が適用される)
++        // --timetable-program-cell-fg: #ffffff;
++        // --timetable-program-cell-fg-sub: rgba(255, 255, 255, 0.85);
++    }
++
++    // 予約ありの塗り: 薄い赤をジャンル色の背景に重ねる (無効な予約は塗らない)
++    &--reserved:not(.timetable-program-cell--disabled) {
++        background: color-mix(in srgb, rgb(var(--v-theme-secondary)) var(--timetable-reserved-fill-ratio), var(--timetable-program-base-background));
+     }
+ 
+-    // 録画中
++    // 録画中: 実線の枠
+     &--recording {
+-        border: 3.8px dashed rgb(var(--v-theme-secondary));
++        border: 3.8px solid rgb(var(--v-theme-secondary));
++    }
++
++    // 録画中の塗り: 予約ありより濃い赤にする (点滅ドットは従来通り表示される)
++    &--recording:not(.timetable-program-cell--disabled) {
++        background: color-mix(in srgb, rgb(var(--v-theme-secondary)) var(--timetable-recording-fill-ratio), var(--timetable-program-base-background));
+     }
+ 
+-    // 一部のみ録画
++    // 一部のみ録画: 実線の枠
+     &--partial {
+-        border: 3.8px dashed rgb(var(--v-theme-warning));
++        border: 3.8px solid rgb(var(--v-theme-warning));
+     }
+ 
+-    // 録画不可
++    // 一部のみ録画の塗り: 薄い warning 色 (警告アイコンが見えなくならないよう赤塗りより優先する)
++    &--partial:not(.timetable-program-cell--disabled) {
++        background: color-mix(in srgb, rgb(var(--v-theme-warning)) var(--timetable-partial-fill-ratio), var(--timetable-program-base-background));
++    }
++
++    // 録画不可: 実線の枠
+     &--unavailable {
+-        border: 3.8px dashed rgb(var(--v-theme-error));
++        border: 3.8px solid rgb(var(--v-theme-error));
++    }
++
++    // 録画不可の塗り: 薄い error 色 (エラーアイコンが見えなくならないよう赤塗りより優先する)
++    &--unavailable:not(.timetable-program-cell--disabled) {
++        background: color-mix(in srgb, rgb(var(--v-theme-error)) var(--timetable-unavailable-fill-ratio), var(--timetable-program-base-background));
+     }
+ 
+-    // 予約無効
++    // 予約無効: 破線の枠のみで塗らない
+     &--disabled {
+         border: 3.8px dashed rgb(var(--v-theme-text-darken-2));
+     }
+@@ -640,7 +668,7 @@ watch(isExpanded, async (value) => {
+         flex-shrink: 0;
+         font-size: 11px;
+         font-weight: bold;
+-        color: rgba(0, 0, 0, 0.7);
++        color: var(--timetable-program-cell-fg-sub, rgba(0, 0, 0, 0.7));
+         line-height: 1.2;
+     }
+ 
+@@ -677,7 +705,7 @@ watch(isExpanded, async (value) => {
+         flex-shrink: 0;  // タイトルは縮小させない（全表示優先）
+         font-size: 12px;
+         font-weight: bold;
+-        color: rgba(0, 0, 0, 0.9);
++        color: var(--timetable-program-cell-fg, rgba(0, 0, 0, 0.9));
+         line-height: 1.3;
+         word-break: break-all;  // 長いタイトルは強制的に折り返し
+     }
+@@ -690,7 +718,7 @@ watch(isExpanded, async (value) => {
+         flex-shrink: 1;  // 説明は縮小可能
+         margin-top: 2px;
+         font-size: 11px;
+-        color: rgba(0, 0, 0, 0.7);
++        color: var(--timetable-program-cell-fg-sub, rgba(0, 0, 0, 0.7));
+         line-height: 1.4;
+         overflow: hidden;
+         min-height: 0;  // flex アイテムがオーバーフローしないように
+--- a/client/src/components/TimeTable/TimeTableTimeScale.vue
++++ b/client/src/components/TimeTable/TimeTableTimeScale.vue
+@@ -2,11 +2,23 @@
+     <div class="timetable-time-scale">
+         <!-- 各時刻のスケール -->
+         <div class="timetable-time-scale__hour"
+-            v-for="hourTime in hourTimes" :key="hourTime.valueOf()"
++            v-for="(hourTime, hourIndex) in hourTimes" :key="hourTime.valueOf()"
+             :style="{
+                 height: `${props.hourHeight}px`,
+             }"
+             :data-hour="hourTime.hour()">
++            <!-- チューナー使用帯 (この1時間に重なる予約区間を、時刻ラベルの背面に重ねて表示) -->
++            <div class="timetable-time-scale__band"
++                v-for="(segment, segmentIndex) in bandSegmentsByHour[hourIndex]" :key="segmentIndex"
++                :class="{
++                    'timetable-time-scale__band--full': segment.isFull,
++                    'timetable-time-scale__band--past': segment.isPast,
++                }"
++                :style="{
++                    top: `${segment.top}px`,
++                    height: `${segment.height}px`,
++                }">
++            </div>
+             <div class="timetable-time-scale__label">
+                 <!-- 日付表示 (特定の時刻に表示) -->
+                 <span class="timetable-time-scale__date" v-if="shouldShowDate(hourTime)">
+@@ -24,15 +36,33 @@ import { computed } from 'vue';
+ 
+ import type { Dayjs } from 'dayjs';
+ 
++import { ITimeTableTunerBusyInterval } from '@/services/Programs';
+ import useSettingsStore from '@/stores/SettingsStore';
+ import useTimeTableStore from '@/stores/TimeTableStore';
++import { dayjs } from '@/utils';
+ 
+ // Props
+ const props = defineProps<{
+     hourHeight: number;
+     is36HourDisplay?: boolean;  // 36時間表示モードかどうか
++    tunerBusyIntervals?: ITimeTableTunerBusyInterval[];  // チューナー使用帯 (全予約から集計された区間リスト)
+ }>();
+ 
++// 同時使用数の上限 (「全チューナー使用中」の判定に使うチューナー台数)
++// 現在のチューナー台数 (2台) に合わせた値。4台化など台数が変わった場合はこの定数だけを変更する
++// 帯の幅は台数によらず一定 (全幅) で、台数の区別は不透明度 (isFull) 側でのみ行う
++const MAX_TUNER_COUNT = 2;
++
++/**
++ * 時刻軸の1時間ブロック内に描画するチューナー使用帯の断片
++ */
++interface ITimeScaleBandSegment {
++    top: number;  // ブロック先頭からの Y 座標 (px)
++    height: number;  // 帯の高さ (px)
++    isFull: boolean;  // 全チューナー使用中 (同時使用数が上限に達している) かどうか
++    isPast: boolean;  // 過去の時間帯の断片かどうか
++}
++
+ // ストア
+ const settingsStore = useSettingsStore();
+ const timetableStore = useTimeTableStore();
+@@ -55,6 +85,47 @@ const hourTimes = computed<Dayjs[]>(() => {
+     return result;
+ });
+ 
++/**
++ * チューナー使用帯を1時間ブロックごとの断片に分割した配列
++ * 帯は複数時間にまたがることがあるため、ブロックごとに重なる部分だけを切り出して描画する
++ * 位置と高さは番組セルと同じ計算式 ((時刻差 / 3600000) * hourHeight) で算出する
++ */
++const bandSegmentsByHour = computed<ITimeScaleBandSegment[][]>(() => {
++    const intervals = props.tunerBusyIntervals ?? [];
++    const totalHours = props.is36HourDisplay ? 36 : 24;
++    const displayStart = timetableStore.display_start_time;
++    const now = dayjs();
++
++    const result: ITimeScaleBandSegment[][] = [];
++    for (let i = 0; i < totalHours; i++) {
++        const hourStart = displayStart.add(i, 'hour');
++        const hourEnd = hourStart.add(1, 'hour');
++        const segments: ITimeScaleBandSegment[] = [];
++
++        for (const interval of intervals) {
++            const intervalStart = dayjs(interval.start_time);
++            const intervalEnd = dayjs(interval.end_time);
++
++            // この1時間に重なる部分だけを切り出す (表示範囲外の部分はクリップされる)
++            const segmentStart = intervalStart.isAfter(hourStart) ? intervalStart : hourStart;
++            const segmentEnd = intervalEnd.isBefore(hourEnd) ? intervalEnd : hourEnd;
++            if (segmentEnd.isAfter(segmentStart) === false) {
++                continue;
++            }
++
++            segments.push({
++                top: (segmentStart.diff(hourStart) / 3600000) * props.hourHeight,
++                height: (segmentEnd.diff(segmentStart) / 3600000) * props.hourHeight,
++                isFull: interval.tuner_count >= MAX_TUNER_COUNT,
++                isPast: segmentEnd.isBefore(now),
++            });
++        }
++
++        result.push(segments);
++    }
++    return result;
++});
++
+ /**
+  * 時刻を表示用にフォーマット
+  * 28時間表記設定に応じて、0:00-3:59 の表示を切り替える
+@@ -117,18 +188,49 @@ function getDateLabel(hourTime: Dayjs): string {
+     flex-direction: column;
+     background: rgb(var(--v-theme-background-lighten-1));
+ 
++    // ===== チューナー使用帯の調整ポイント (見た目を変える場合はこの変数だけを変更する) =====
++    // 帯の不透明度 (一部使用中 / 全台使用中)
++    // 2026-11-17: 時刻軸の濃紺背景で 0.4 では見分けられなかったため引き上げ (ユーザー確認のうえ決定)
++    --timetable-busy-band-opacity: 0.8;
++    --timetable-busy-band-opacity-full: 1;
++    // 過去の時間帯の帯の不透明度倍率 (初期値 1 = 未来と同じ濃さ。過去を薄くする場合は 0.45 などに下げる)
++    --timetable-busy-band-past-opacity: 1;
++
+     // 各時刻
+     &__hour {
+         display: flex;
+         flex-direction: column;
+         align-items: center;
+         justify-content: flex-start;
++        position: relative;  // チューナー使用帯を絶対配置するため
+         border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+         color: #ffffff;
+         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+         z-index: 1;
+     }
+ 
++    // チューナー使用帯 (時刻軸の右端に寄せて表示。幅は台数によらず全幅で統一し、台数の区別は不透明度で行う)
++    // 時刻・日付ラベル (z-index: 1) の背面に描画し、ラベルの上には被せない
++    &__band {
++        position: absolute;
++        right: 0;
++        width: 100%;
++        // テーマ変数は "r,g,b" のカンマ区切りのため、アルファ付きは rgba() のカンマ形式で書く
++        // (rgb(var(--v-theme-secondary) / 0.8) のようなスラッシュ形式は var 展開後に不正な CSS となり、宣言ごと無効になる)
++        background: rgba(var(--v-theme-secondary), var(--timetable-busy-band-opacity));
++        pointer-events: none;
++
++        // 全チューナー使用中は濃く表示する
++        &--full {
++            background: rgba(var(--v-theme-secondary), var(--timetable-busy-band-opacity-full));
++        }
++
++        // 過去の時間帯の帯 (初期値では未来と同じ濃さ)
++        &--past {
++            opacity: var(--timetable-busy-band-past-opacity);
++        }
++    }
++
+     // 時刻ごとの背景色 (REGZA 風)
+     &__hour[data-hour='0'] { background: var(--timetable-time-scale-color-00); }
+     &__hour[data-hour='1'] { background: var(--timetable-time-scale-color-01); }
+@@ -161,9 +263,13 @@ function getDateLabel(hourTime: Dayjs): string {
+         align-items: center;
+         position: sticky;
+         top: var(--timetable-channel-header-height);
++        z-index: 1;  // チューナー使用帯より上に表示する
+         padding-top: 6px;
+         padding-bottom: 4px;
+-        background: inherit;
++        // 背景は塗らず、チューナー使用帯が文字の背面にも連続して見えるようにする
++        // (以前は background: inherit で時刻ブロックの背景色を塗っていたため、帯がラベルの四角で途切れて見えた)
++        // 帯の上でも白文字が読めるよう、影を少し強める
++        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.65), 0 0 2px rgba(0, 0, 0, 0.4);
+     }
+ 
+     // 日付ラベル (4/8/12/16/20/24(0) に表示)
+--- a/client/src/services/Programs.ts
++++ b/client/src/services/Programs.ts
+@@ -122,6 +122,7 @@ export interface IProgramSearchConditionDate {
+ export interface ITimeTable {
+     channels: ITimeTableChannel[];
+     date_range: ITimeTableDateRange;
++    tuner_busy_intervals: ITimeTableTunerBusyInterval[];
+ }
+ 
+ /**
+@@ -167,6 +168,15 @@ export interface ITimeTableProgramReservation {
+     recording_availability: 'Full' | 'Partial' | 'Unavailable';
+ }
+ 
++/**
++ * 番組表向けのチューナー使用帯 (予約によりチューナーが使用される時間帯)
++ */
++export interface ITimeTableTunerBusyInterval {
++    start_time: string;
++    end_time: string;
++    tuner_count: number;
++}
++
+ 
+ /**
+  * 番組情報に関する API 操作を提供するクラス
+--- a/client/src/stores/TimeTableStore.ts
++++ b/client/src/stores/TimeTableStore.ts
+@@ -6,7 +6,7 @@ import { computed, ref, shallowRef, watch } from 'vue';
+ import type { Dayjs } from 'dayjs';
+ 
+ import { ChannelType, ChannelTypePretty } from '@/services/Channels';
+-import Programs, { ITimeTableChannel } from '@/services/Programs';
++import Programs, { ITimeTableChannel, ITimeTableTunerBusyInterval } from '@/services/Programs';
+ import useChannelsStore from '@/stores/ChannelsStore';
+ import useSettingsStore from '@/stores/SettingsStore';
+ import { dayjs } from '@/utils';
+@@ -56,6 +56,9 @@ const useTimeTableStore = defineStore('timetable', () => {
+     // 番組表の日付範囲 (API から取得した earliest/latest)
+     const date_range = ref<{ earliest: Dayjs; latest: Dayjs } | null>(null);
+ 
++    // チューナー使用帯 (番組表の時刻軸表示用、API から取得した全予約ベースの集計結果)
++    const tuner_busy_intervals = shallowRef<ITimeTableTunerBusyInterval[]>([]);
++
+     // ローディング状態
+     const is_loading = ref<boolean>(false);
+ 
+@@ -351,6 +354,9 @@ const useTimeTableStore = defineStore('timetable', () => {
+             latest: dayjs(response.date_range.latest),
+         };
+ 
++        // チューナー使用帯を更新 (旧サーバーが返さない場合は空として扱う)
++        tuner_busy_intervals.value = response.tuner_busy_intervals ?? [];
++
+         return true;
+     }
+ 
+@@ -625,6 +631,7 @@ const useTimeTableStore = defineStore('timetable', () => {
+      */
+     function reset(): void {
+         channels_data.value = [];
++        tuner_busy_intervals.value = [];
+         date_range.value = null;
+         is_loading.value = false;
+         is_initial_load_completed.value = false;
+@@ -682,6 +689,7 @@ const useTimeTableStore = defineStore('timetable', () => {
+         selected_channel_type,
+         selected_date,
+         channels_data,
++        tuner_busy_intervals,
+         date_range,
+         is_loading,
+         is_initial_load_completed,
+--- a/server/app/routers/ProgramsRouter.py
++++ b/server/app/routers/ProgramsRouter.py
+@@ -534,6 +534,8 @@ async def TimeTableAPI(
+     # EDCB バックエンドの場合は予約情報を取得
+     reservations_by_program_id: dict[str, dict[str, Any]] = {}
+     reservations_by_channel_time: dict[str, list[dict[str, Any]]] = {}
++    # チューナー使用帯 (予約取得に失敗した場合は空のまま番組表自体は返す)
++    tuner_busy_intervals: list[schemas.TimeTableTunerBusyInterval] = []
+     if Config().general.backend == 'EDCB':
+         try:
+             edcb = CtrlCmdUtil()
+@@ -603,6 +605,67 @@ async def TimeTableAPI(
+                             'end_time': reserve_end_time,
+                             'reservation': reservations_by_program_id[program_id],
+                         })
++
++                # チューナー使用帯を集計する (番組表の時刻軸表示用)
++                ## 表示対象のチャンネル種別に引きずられないよう、取得した全予約から集計する
++                ## 同一物理チャンネル (ONID, TSID) の重なる予約は1台分として数えるため、
++                ## まず物理チャンネルごとに予約区間を集める
++                busy_intervals_by_ts: dict[tuple[int, int], list[tuple[datetime, datetime]]] = {}
++                for reserve_data in reserve_data_list:
++                    # 無効な予約 (rec_mode が5以上) はチューナーを使用しないため除外する
++                    if reserve_data.get('rec_setting', {}).get('rec_mode', 1) >= 5:
++                        continue
++                    busy_start_time = NormalizeToJSTDatetime(reserve_data['start_time'])
++                    busy_end_time = busy_start_time + timedelta(seconds=reserve_data['duration_second'])
++                    # 表示範囲 (リクエストの start_time 〜 end_time) でクリップする
++                    busy_start_time = max(busy_start_time, start_time)
++                    busy_end_time = min(busy_end_time, end_time)
++                    if busy_start_time >= busy_end_time:
++                        continue
++                    busy_ts_key = (reserve_data['onid'], reserve_data['tsid'])
++                    if busy_ts_key not in busy_intervals_by_ts:
++                        busy_intervals_by_ts[busy_ts_key] = []
++                    busy_intervals_by_ts[busy_ts_key].append((busy_start_time, busy_end_time))
++
++                # 物理チャンネルごとに重なる (または接する) 区間をマージし、物理チャンネル単位の使用区間に変換する
++                merged_busy_intervals: list[tuple[datetime, datetime]] = []
++                for ts_intervals in busy_intervals_by_ts.values():
++                    ts_intervals.sort()
++                    merged_start_time, merged_end_time = ts_intervals[0]
++                    for interval_start_time, interval_end_time in ts_intervals[1:]:
++                        if interval_start_time <= merged_end_time:
++                            merged_end_time = max(merged_end_time, interval_end_time)
++                        else:
++                            merged_busy_intervals.append((merged_start_time, merged_end_time))
++                            merged_start_time, merged_end_time = interval_start_time, interval_end_time
++                    merged_busy_intervals.append((merged_start_time, merged_end_time))
++
++                # マージ済み区間を開始・終了イベントとして走査し、同時使用数ごとの区間に分割する
++                ## [開始, 終了) の半開区間として扱うため、同一時刻では終了 (-1) を開始 (+1) より先に処理する
++                busy_events: list[tuple[datetime, int]] = []
++                for interval_start_time, interval_end_time in merged_busy_intervals:
++                    busy_events.append((interval_start_time, 1))
++                    busy_events.append((interval_end_time, -1))
++                busy_events.sort(key=lambda event: (event[0], event[1]))
++
++                current_tuner_count = 0
++                previous_event_time: datetime | None = None
++                for event_time, delta in busy_events:
++                    # 前のイベント時刻から現在時刻までチューナーが使われていた区間を出力する
++                    if previous_event_time is not None and event_time > previous_event_time and current_tuner_count > 0:
++                        if (len(tuner_busy_intervals) > 0 and
++                            tuner_busy_intervals[-1].tuner_count == current_tuner_count and
++                            tuner_busy_intervals[-1].end_time == previous_event_time):
++                            # 同時使用数が同じで連続する区間は1つにまとめる
++                            tuner_busy_intervals[-1].end_time = event_time
++                        else:
++                            tuner_busy_intervals.append(schemas.TimeTableTunerBusyInterval(
++                                start_time=previous_event_time,
++                                end_time=event_time,
++                                tuner_count=current_tuner_count,
++                            ))
++                    current_tuner_count += delta
++                    previous_event_time = event_time
+         except Exception as ex:
+             # 予約情報の取得に失敗しても番組表自体は返す
+             logging.warning('[ProgramsRouter][TimeTableAPI] Failed to get reservations:', exc_info=ex)
+@@ -706,4 +769,5 @@ async def TimeTableAPI(
+     return schemas.TimeTable(
+         channels=validated_channels,
+         date_range=schemas.TimeTableDateRange(earliest=earliest, latest=latest),
++        tuner_busy_intervals=tuner_busy_intervals,
+     )
+--- a/server/app/schemas.py
++++ b/server/app/schemas.py
+@@ -104,6 +104,8 @@ class TimeTable(BaseModel):
+     channels: list[TimeTableChannel]
+     # 番組データの有効範囲 (日付セレクター用)
+     date_range: TimeTableDateRange
++    # チューナー使用帯 (予約によりチューナーが使用される時間帯、番組表の時刻軸表示用)
++    tuner_busy_intervals: list[TimeTableTunerBusyInterval] = []
+ 
+ class TimeTableDateRange(BaseModel):
+     # 番組データの最も早い日時
+@@ -141,6 +143,14 @@ class TimeTableProgramReservation(BaseModel):
+     # ref: https://github.com/xtne6f/EDCB/blob/work-plus-s-240212/Common/StructDef.h#L62
+     recording_availability: Literal['Full', 'Partial', 'Unavailable']
+ 
++class TimeTableTunerBusyInterval(BaseModel):
++    # チューナー使用開始時刻
++    start_time: datetime
++    # チューナー使用終了時刻
++    end_time: datetime
++    # 同時に使用されるチューナー数 (同一物理チャンネルの重なる予約は1台分として集計)
++    tuner_count: int
++
+ # ***** 録画ファイル *****
+ 
+ class RecordedVideo(PydanticModel):

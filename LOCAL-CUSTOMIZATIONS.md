@@ -610,3 +610,12 @@ KonomiTV 本体のパッチではなく、横に置く連携ツール。上の�
 
 素の v0.14.1 に11バンドル（base-integration、playback、comment-highlights、recorder-features、refinements、tv-support、storage-display、live-tuner-gating、filter-ui、mobile-player-controls、partially-recorded-tolerance）を順に適用したツリーが、本番の client/src と server/app の全ファイルと一致することを確認した（全ツリーの diff が空）。
 - 追記（同日）：表示文言も「一部のみ」では分かりにくいというユーザー指摘で「録画不完全」に変更した（録画カードのバッジ、再生画面の録画期間表示、録画結果一覧のステータス表記）。同じバンドルに収録（同日夜、ユーザーの希望で表示文言は元の「一部のみ」に戻し、許容誤差のみが残った）
+
+## 2026-11-18 追加分（番組表の色付け・UI表示倍率・フルスクリーンのシークバー・手動予約の削除）
+
+### 番組表の色付けと時刻軸のチューナー使用帯（timetable-coloring に収録）
+
+- 予約済みの番組セルを薄い赤で塗り（録画中はより濃く、一部のみ録画・録画不可は warning / error 色）、枠は破線から実線に変更。塗りの濃さは CSS 変数（--timetable-reserved-fill-ratio など）で調整できる
+- 番組表の左端（時刻軸）に、全予約から集計したチューナー使用帯を表示する。サーバー側（ProgramsRouter）が物理チャンネル（ONID/TSID）単位で予約区間をマージし、同時使用数ごとの区間（tuner_busy_intervals）にして返す。無効な予約は除外し、予約取得に失敗した場合は帯なしで番組表自体は返す。帯の幅は台数によらず全幅で統一し、台数の区別は不透明度のみ（1台 0.8／全台 1.0）。同時使用数の上限は TimeTableTimeScale.vue の MAX_TUNER_COUNT 定数（現在 2台）
+- 実装上の注意：帯の背景色は Vuetify のテーマ変数がカンマ区切り（"r,g,b"）のため rgba() のカンマ形式で書く。スラッシュ形式（rgb(var(--v-theme-secondary) / 0.8)）は var 展開後に不正な CSS となり宣言ごと無効になる（実際に踏んで修正した）。時刻ラベルの背景も外し、帯が白文字の背面まで連続して見えるようにした
+- 検証（2026-11-17〜18）：本番反映済み。ユーザーが実機で帯の表示と濃さを確認
